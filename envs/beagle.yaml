@@ -1,0 +1,7 @@
+name: beagle
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - openjdk=8
