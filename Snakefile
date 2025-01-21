@@ -2,7 +2,8 @@ localrules: make_per_chrom_vcf, normalize_vcf, concat_chromosomes, vcf_to_plink
 
 # Configuration with your specific paths
 config = {
-    "bfile": "/mnt/efshome/aquagen/projects/AG_global_breeding/Rainbowtrout/deformity_RT23_2024/deform_main_analysis/genotypes/raw_genos_parents/parents_offspring_combined",
+    #"bfile": "/mnt/efshome/aquagen/projects/AG_global_breeding/Rainbowtrout/deformity_RT23_2024/deform_main_analysis/genotypes/raw_genos_parents/parents_offspring_combined",
+    "bfile": "tests/data/test_salmon",
     "plink_path": "/mnt/efshome/home/timknu/bioinf_tools/plink2.0/plink2",
     "beagle_jar": "/mnt/efshome/home/timknu/bioinf_tools/beagle5.5/beagle.17Dec24.224.jar",
     "tabix_path": "/mnt/efshome/applications/miniconda3/envs/bioinf_tools/bin/tabix",
@@ -14,6 +15,12 @@ config = {
         "nthreads": 9
     }
 }
+
+# Add to existing config
+config.update({
+    "reference_vcf": "tests/data/test_salmon_ref.PHASED.vcf.gz",  # Path to reference panel VCF
+    "conform_gt_jar": "/mnt/efshome/home/timknu/bioinf_tools/conform-gt.24May16.cee.jar", # Path to conform-gt jar
+})
 
 # Helper function to get chromosomes from bim file
 def get_chromosomes(bfile):
@@ -37,34 +44,29 @@ rule all:
 
 rule make_per_chrom_vcf:
     input:
-        bed = config["bfile"] + ".bed",
-        bim = config["bfile"] + ".bim",
-        fam = config["bfile"] + ".fam"
+        bed = config["bfile"] + ".bed"
     output:
-        vcf = temp(directory(config["output_dir"]) + "/chr{chrom}.vcf.gz"),
-        vcf_logs = temp(directory(config["output_dir"]) + "/chr{chrom}.log")
+        vcf = directory(config["output_dir"]) + "/dedup/chr{chrom}.vcf.gz"
     params:
+        plink = config["plink_path"],
         bfile = config["bfile"],
-        plink = config["plink_path"]
+        out_prefix = config["output_dir"] + "/dedup/chr{chrom}",
+        chr = "{chrom}"
     log:
-        directory("logs") + "/chr{chrom}.log"
+        directory("logs") + "/dedup_chr{chrom}.log"
     resources:
         slurm_partition="r6i-ondemand-xlarge",
-        mem_mb=32000,
-        runtime=60
     shell:
-        """
-        mkdir -p {config[output_dir]} logs
-        
+        """        
         ({params.plink} \
             --nonfounders \
             --allow-no-sex \
             --bfile {params.bfile} \
-            --chr {wildcards.chrom} \
+            --chr {params.chr} \
             --export vcf bgz \
             --dog \
             --aec \
-            --out {config[output_dir]}/chr{wildcards.chrom} \
+            --out {params.out_prefix} \
             --snps-only just-acgt) &> {log}
         """
 
@@ -72,26 +74,88 @@ rule normalize_vcf:
     input:
         vcf = rules.make_per_chrom_vcf.output.vcf
     output:
-        vcf = temp(directory(config["output_dir"]) + "/normalized/chr{chrom}.vcf.gz")
+        vcf = directory(config["output_dir"]) + "/normalized/chr{chrom}.vcf.gz"
     conda:
         "envs/bcftools.yaml"
     log:
         directory("logs") + "/normalize_chr{chrom}.log"
     resources:
         slurm_partition="r6i-ondemand-2xlarge",
-        runtime=120
-
     shell:
-        """
-        mkdir -p {config[output_dir]}/normalized logs
-        
+        """        
         (bcftools norm -d snps {input.vcf} | \
          bgzip > {output.vcf}) 2> {log}
+
+         tabix -f -p vcf {output.vcf}
+        """
+
+rule bcftools_isec:
+    input:
+        target = rules.normalize_vcf.output.vcf,
+        reference = config.get("reference_vcf", "")
+    output:
+        vcf = directory(config["output_dir"]) + "/intersect/chr{chrom}_temp/0002.vcf.gz",
+        tbi = directory(config["output_dir"]) + "/intersect/chr{chrom}_temp/0002.vcf.gz.tbi"
+    params:
+        outdir = lambda wildcards: f"{config['output_dir']}/intersect/chr{wildcards.chrom}_temp",
+        tabix = config["tabix_path"]
+    conda:
+        "envs/bcftools.yaml"
+    log:
+        directory("logs") + "/bcftools_isec_chr{chrom}.log"
+    resources:
+        slurm_partition = "r6i-ondemand-xlarge",
+        mem_mb = 32000,
+        runtime = 60
+    shell:
+        """
+        mkdir -p {params.outdir}
+        
+        (bcftools isec \
+            -p {params.outdir} \
+            -O z \
+            {input.target} \
+            {input.reference}) 2> {log}
+        """
+
+rule conform_gt:
+    input:
+        vcf = rules.bcftools_isec.output.vcf,
+        ref = config.get("reference_vcf", "")
+    output:
+        vcf = temp(directory(config["output_dir"]) + "/harmonized/chr{chrom}.vcf.gz"),
+    params:
+        conform_jar = config.get("conform_gt_jar", ""),
+        tabix = config["tabix_path"],
+        outbase = lambda wildcards: f"{config['output_dir']}/harmonized/chr{wildcards.chrom}"
+    conda:
+        "envs/beagle.yaml"
+    log:
+        directory("logs") + "/conform_gt_chr{chrom}.log"
+    resources:
+        slurm_partition = "r6i-ondemand-xlarge",
+        mem_mb = 32000,
+        runtime = 60
+    shell:
+        """
+        java -Xmx{resources.mem_mb}m -jar {params.conform_jar} \
+            ref={input.ref} \
+            gt={input.vcf} \
+            chrom={wildcards.chrom} \
+            match=POS \
+            out={params.outbase} 2> {log}
+
+        if [ -f "{params.outbase}.vcf.gz" ]; then
+            {params.tabix} -f -p vcf {output.vcf}
+        else
+            echo "No conform-gt .vcf.gz output found for chr{wildcards.chrom}" >> {log}
+            exit 1
+        fi
         """
 
 rule run_beagle:
     input:
-        vcf = rules.normalize_vcf.output.vcf
+        vcf = rules.conform_gt.output.vcf
     output:
         vcf = temp(directory(config["output_dir"]) + "/imputed/chr{chrom}.vcf.gz"),
         tbi = temp(directory(config["output_dir"]) + "/imputed/chr{chrom}.vcf.gz.tbi"),
@@ -109,27 +173,27 @@ rule run_beagle:
     log:
         directory("logs") + "/beagle_chr{chrom}.log"
     resources:
-        mem_mb=70000,  # 70GB per job
-        runtime=240,
-        slurm_partition="r6i-ondemand-12xlarge",
-        cpus_per_task=9
+        mem_mb = 70000,
+        runtime = 240,
+        slurm_partition = "r6i-ondemand-12xlarge",
+        cpus_per_task = 9
     group:
         "beagle"
     shell:
         """
-        mkdir -p {config[output_dir]}/imputed logs
+        (
+            java -Xmx{resources.mem_mb}m -jar {params.beagle} \
+                gt={input.vcf} \
+                window={params.window} \
+                overlap={params.overlap} \
+                out={params.outbase} \
+                nthreads={threads} \
+                ne={params.ne} \
+                chrom={wildcards.chrom}
+        ) &> {log}
 
-        (java -Xmx{resources.mem_mb}m -jar {params.beagle} \
-            gt={input.vcf} \
-            window={params.window} \
-            overlap={params.overlap} \
-            out={params.outbase} \
-            nthreads={threads} \
-            ne={params.ne} \
-            chrom={wildcards.chrom} && \
-        {params.tabix} -f {output.vcf}) &> {log}
+        {params.tabix} -f {output.vcf}
         """
-
 # Add the new concatenation rule
 rule concat_chromosomes:
     input:
