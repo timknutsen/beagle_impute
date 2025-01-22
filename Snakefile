@@ -46,8 +46,8 @@ rule make_per_chrom_vcf:
     input:
         bed = config["bfile"] + ".bed"
     output:
-        vcf = temp(directory(config["output_dir"] + "/dedup") + "/chr{chrom}.vcf.gz"),
-        logs = temp(directory(config["output_dir"] + "/dedup") + "/chr{chrom}.log")
+        vcf = temp(config["output_dir"] + "/dedup" + "/chr{chrom}.vcf.gz"),
+        logs = temp(config["output_dir"] + "/dedup" + "/chr{chrom}.log")
     shadow: "shallow"
     params:
         plink = config["plink_path"],
@@ -55,7 +55,7 @@ rule make_per_chrom_vcf:
         out_prefix = config["output_dir"] + "/dedup/chr{chrom}",
         chr = "{chrom}"
     log:
-        directory("logs") + "/dedup_chr{chrom}.log"
+        "logs/dedup_chr{chrom}.log"
     resources:
         slurm_partition="r6i-ondemand-xlarge",
     shell:
@@ -69,15 +69,15 @@ rule make_per_chrom_vcf:
             --dog \
             --aec \
             --out {params.out_prefix} \
-            --snps-only just-acgt) &> {log}
+            --snps-only) &> {log}
         """
 
 rule normalize_vcf:
     input:
         vcf = rules.make_per_chrom_vcf.output.vcf
     output:
-        vcf = temp(directory(config["output_dir"]) + "/normalized/chr{chrom}.vcf.gz"),
-        tbi = temp(directory(config["output_dir"]) + "/normalized/chr{chrom}.vcf.gz.tbi")
+        vcf = temp(config["output_dir"] + "/normalized/chr{chrom}.vcf.gz"),
+        tbi = temp(config["output_dir"] + "/normalized/chr{chrom}.vcf.gz.tbi")
     conda:
         "envs/bcftools.yaml"
     log:
