@@ -1,0 +1,9 @@
+name: workflow_env
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - openjdk=8
+  - htslib
+  - bcftools
