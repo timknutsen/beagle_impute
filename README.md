@@ -1,149 +1,73 @@
-# Chromosome-wise VCF Processing and Beagle Imputation Pipeline
 
-This Snakemake workflow processes PLINK binary files chromosome by chromosome, converts them to VCF format, normalizes them using bcftools, and performs imputation using Beagle.
+# Chromosome-wise Imputation Pipeline
 
-## Prerequisites
+This pipeline converts PLINK files to VCF per chromosome, optionally harmonizes against a reference VCF, and imputes with Beagle.
 
-1. Software Requirements:
-   - Snakemake (>=8.0)
-   - PLINK 2.0
-   - bcftools
-   - Beagle (v5.4)
-   - Java (for Beagle)
-   - Python with pandas
+## 1. Requirements
 
-2. Required conda environments:
+- **Conda** and **Snakemake** installed
+- Everything else (PLINK, bcftools, Java, etc.) is automatically handled by Snakemake via `envs/workflow_env.yaml`.
 
-```yaml
-# envs/bcftools.yaml
-name: bcftools
-channels:
-  - bioconda
-  - conda-forge
-dependencies:
-  - bcftools
-  - htslib
+## 2. Configuration
 
-# envs/beagle.yaml
-name: beagle
-channels:
-  - conda-forge
-dependencies:
-  - openjdk=8
-```
-
-## Directory Structure
-```
-.
-├── Snakefile
-├── envs/
-│   ├── bcftools.yaml
-│   └── beagle.yaml
-├── logs/
-└── vcf_output/
-    ├── normalized/
-    └── imputed/
-```
-
-## Configuration
-
-The workflow configuration is defined in the Snakefile. Key parameters include:
+Inside the **Snakefile**, we have the following default `config`:
 
 ```python
+localrules: make_per_chrom_vcf, normalize_vcf, concat_chromosomes, vcf_to_plink
+
 config = {
-    "bfile": "path/to/your/plink/files",
-    "plink_path": "path/to/plink2",
-    "beagle_jar": "path/to/beagle.jar",
+    # Paths that typically need changing
+    "bfile": "tests/data/test_salmon",
+    "reference_vcf": "tests/data/test_salmon_ref.PHASED.vcf.gz",  # (Optional) path to reference VCF
+
+    # Default paths and parameters
+    "plink_path": "/mnt/efshome/home/timknu/bioinf_tools/plink2.0/plink2",
+    "beagle_jar": "/mnt/efshome/home/timknu/bioinf_tools/beagle5.5/beagle.17Dec24.224.jar",
     "output_dir": "vcf_output",
     "beagle_params": {
         "window": 80,
         "overlap": 10,
         "ne": 500,
-        "nthreads": 9
-    }
+        "nthreads": 1
+    },
+    "conform_gt_jar": "/mnt/efshome/home/timknu/bioinf_tools/conform-gt.24May16.cee.jar"
 }
 ```
 
-## Resource Requirements
+### Key Parameters
+- **`bfile`**: Prefix of your PLINK `.bed/.bim/.fam`
+- **`reference_vcf`**: (Optional) Reference panel VCF for harmonization
+- **`plink_path`**: Location of PLINK2 executable
+- **`beagle_jar`**: Path to Beagle JAR file
+- **`conform_gt_jar`**: Path to conform-gt JAR (only used if `reference_vcf` is set)
 
-The workflow uses three different AWS instance types for different stages:
-- PLINK conversion: r6i.xlarge (4 vCPU, 32GB RAM)
-- VCF normalization: r6i.2xlarge (8 vCPU, 64GB RAM)
-- Beagle imputation: r6i.12xlarge (48 vCPU, 384GB RAM)
-
-## Running the Pipeline
-
-Execute the workflow using:
-
+You can override these in your terminal:
 ```bash
-snakemake --executor slurm \
-          -j135 \
-          --use-conda \
-          --group-components beagle=5 \
-          --cores 48
+snakemake --use-conda \
+          --cores 8 \
+          --config bfile=/path/to/mydata \
+                   reference_vcf=/path/to/ref.vcf.gz \
+                   plink_path=/path/to/plink2
 ```
 
-Command explanation:
-- `--executor slurm`: Use SLURM for job submission
-- `-j35`: Allow up to 35 jobs to run concurrently
-- `--use-conda`: Use conda environments for software dependencies
-- `--group-components beagle=5`: Group Beagle jobs in batches of 5
-- `--cores 48`: Use 48 cores total (matches r6i.12xlarge instance)
+## 3. Running the Pipeline
 
-## Running with Custom Input Files
+1. **Clone** this repository and ensure `Snakefile` + `envs/workflow_env.yaml` are present.
+2. **Check** or **override** the `config` paths above.
+3. **Run**:
+   ```bash
+   snakemake --use-conda --cores 8
+   ```
+   (Add `--executor slurm`, resource settings, or job grouping as needed.)
 
-To run the workflow with a different input PLINK bed file set:
+## 4. Outputs
 
-```bash
-# Run with custom bed file input
-snakemake --executor slurm \
-          -j100 \
-          --use-conda \
-          --group-components beagle=5 \
-          --cores 48 \
-          --config bfile=/path/to/your/custom/bedfile
-```
+- Per-chromosome imputed VCFs: `vcf_output/imputed/chr{chrom}.vcf.gz`
+- Single combined VCF: `vcf_output/all_chromosomes.vcf.gz`
+- Final PLINK files: `plink_binary/imputed_data.bed/.bim/.fam`
 
-Notes:
-- Provide the path without the .bed/.bim/.fam extension
-- The workflow will automatically look for the corresponding .bim and .fam files
-- All other configuration parameters remain as defined in the Snakefile
-- Output directories and structure remain the same
+## 5. Notes
 
-## Workflow Steps
-
-1. **make_per_chrom_vcf**: 
-   - Converts PLINK binary files to VCF format per chromosome
-   - Uses r6i.xlarge instance
-   - Runtime: 60 minutes per job
-
-2. **normalize_vcf**: 
-   - Normalizes VCF files using bcftools
-   - Uses r6i.2xlarge instance
-   - Runtime: 120 minutes per job
-
-3. **run_beagle**: 
-   - Performs imputation using Beagle
-   - Uses r6i.12xlarge instance
-   - Groups 5 chromosomes per job
-   - 70GB memory and 9 cores per chromosome
-   - Runtime: 240 minutes per job
-
-## Output Files
-
-- Raw VCF files: `vcf_output/chr{chrom}.vcf.gz`
-- Normalized VCF files: `vcf_output/normalized/chr{chrom}.vcf.gz`
-- Imputed VCF files: `vcf_output/imputed/chr{chrom}.vcf.gz`
-
-## Logs
-
-All logs are stored in the `logs/` directory:
-- PLINK conversion: `logs/chr{chrom}.log`
-- Normalization: `logs/normalize_chr{chrom}.log`
-- Beagle imputation: `logs/beagle_chr{chrom}.log`
-
-## Notes
-
-- The workflow automatically excludes chromosome 0
-- Local rules (make_per_chrom_vcf and normalize_vcf) run on the head node
-- Beagle jobs are grouped to optimize resource usage on the r6i.12xlarge instance
+- **Harmonization** (bcftools + conform-gt) only runs if `reference_vcf` is specified.
+- **Logs** are written to `logs/` per step and per chromosome.
+- The `beagle_params` (e.g. `nthreads`) should match the resources allocated on your cluster or local machine.
