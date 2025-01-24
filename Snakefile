@@ -1,23 +1,7 @@
+# Load configuration
+configfile: "/mnt/efshome/aquagen/code/timknu/workflows/beagle_impute/config.yaml"
+
 localrules: make_per_chrom_vcf, normalize_vcf, concat_chromosomes, vcf_to_plink
-
-# Configuration with your specific paths
-config = {
-    # Paths that should be changed
-    "bfile": "tests/data/test_salmon",
-    "reference_vcf": "tests/data/test_salmon_ref.PHASED.vcf.gz",  # Optional path to reference panel VCF
-
-    # Default paths and parameters
-    "plink_path": "/mnt/efshome/home/timknu/bioinf_tools/plink2.0/plink2",
-    "beagle_jar": "/mnt/efshome/home/timknu/bioinf_tools/beagle5.5/beagle.17Dec24.224.jar",
-    "output_dir": "vcf_output",
-    "beagle_params": {
-        "window": 80,
-        "overlap": 10,
-        "ne": 500,
-        "nthreads": 1
-    },
-    "conform_gt_jar": "/mnt/efshome/home/timknu/bioinf_tools/conform-gt.24May16.cee.jar" # Path to conform-gt jar
-}
 
 # Helper function to get chromosomes from bim file
 def get_chromosomes(bfile):
@@ -26,15 +10,17 @@ def get_chromosomes(bfile):
     chroms = [chr for chr in bim[0].unique() if chr != 0]
     return sorted(chroms, key=int)
 
-# Get list of chromosomes
-CHROMS = get_chromosomes(config["bfile"])
+# Function to get chromosomes at runtime
+def get_chroms():
+    return get_chromosomes(config["bfile"])
 
+# Rest of your rules remain the same, but reference config directly
 rule all:
     input:
         expand(
             "{output_dir}/imputed/chr{chrom}.vcf.gz",
             output_dir=config["output_dir"],
-            chrom=CHROMS
+            chrom=get_chroms()
         ),
         config["output_dir"] + "/all_chromosomes.vcf.gz",
         "plink_binary/imputed_data.bed"
@@ -45,7 +31,6 @@ rule make_per_chrom_vcf:
     output:
         vcf = temp(config["output_dir"] + "/dedup" + "/chr{chrom}.vcf.gz"),
         logs = temp(config["output_dir"] + "/dedup" + "/chr{chrom}.log")
-    shadow: "shallow"
     params:
         plink = config["plink_path"],
         bfile = config["bfile"],
@@ -53,6 +38,7 @@ rule make_per_chrom_vcf:
         chr = "{chrom}"
     log:
         "logs/dedup_chr{chrom}.log"
+    threads: 1
     resources:
         slurm_partition="r6i-ondemand-xlarge",
     shell:
@@ -79,6 +65,7 @@ rule normalize_vcf:
         "envs/workflow_env.yaml"
     log:
         "logs/normalize_chr{chrom}.log"
+    threads: 1
     resources:
         slurm_partition="r6i-ondemand-2xlarge",
     shell:
@@ -117,9 +104,7 @@ rule run_beagle:
         "logs/beagle_chr{chrom}.log"
     resources:
         mem_mb = 70000,
-        runtime = 240,
-        slurm_partition = "r6i-ondemand-12xlarge",
-        cpus_per_task = 9
+        slurm_partition = "r6i-ondemand-12xlarge"
     group:
         "beagle"
     shell:
@@ -145,12 +130,12 @@ rule concat_chromosomes:
         vcfs = expand(
             "{output_dir}/imputed/chr{chrom}.vcf.gz",
             output_dir=config["output_dir"],
-            chrom=CHROMS
+            chrom=get_chroms()
         ),
         tbi = expand(
             "{output_dir}/imputed/chr{chrom}.vcf.gz.tbi",
             output_dir=config["output_dir"],
-            chrom=CHROMS
+            chrom=get_chroms()
         )
 
     output:
@@ -160,8 +145,7 @@ rule concat_chromosomes:
     threads: 4
     resources:
         slurm_partition="r6i-ondemand-2xlarge",
-        mem_mb=64000,
-        runtime=120
+        mem_mb=64000
     log:
         "logs/concat_chromosomes.log"
     shell:
