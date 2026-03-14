@@ -2,15 +2,41 @@ configfile: "config.yaml"
 
 import pandas as pd
 
-# Helper function to get chromosomes from bim file
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
 def get_chromosomes(bfile):
     bim = pd.read_csv(f"{bfile}.bim", sep='\t', header=None)
     chroms = [chr for chr in bim[0].unique() if chr != 0]
     return sorted(chroms, key=int)
 
-# Function to get chromosomes at runtime
 def get_chroms():
     return get_chromosomes(config["bfile"])
+
+# ---------------------------------------------------------------------------
+# Parse-time feature flags
+# ---------------------------------------------------------------------------
+
+_use_ref   = bool(config.get("reference_vcf", "").strip())
+_use_bref3 = _use_ref and bool(config.get("bref3_jar", "").strip())
+
+# When a reference is used, Beagle writes to imputed_ref/ (markers at ref
+# positions only). The merge rule below then adds back target-only markers
+# and writes the final result to imputed/ — the same path concat_chromosomes
+# expects in both modes, so no downstream rule changes are needed.
+_beagle_subdir = "imputed_ref" if _use_ref else "imputed"
+
+# ---------------------------------------------------------------------------
+# Conditional includes
+# ---------------------------------------------------------------------------
+
+if _use_ref:
+    include: "rules/intersect_and_conform.smk"
+
+# ---------------------------------------------------------------------------
+# rule all
+# ---------------------------------------------------------------------------
 
 rule all:
     input:
@@ -23,16 +49,20 @@ rule all:
         config["output_dir"] + "/all_chromosomes.vcf.gz.tbi",
         "plink_binary/imputed_data.bed"
 
+# ---------------------------------------------------------------------------
+# Per-chromosome VCF extraction from PLINK binary
+# ---------------------------------------------------------------------------
+
 rule make_per_chrom_vcf:
     input:
         bed = config["bfile"] + ".bed"
     output:
-        vcf = temp(config["output_dir"] + "/dedup" + "/chr{chrom}.vcf.gz")
+        vcf = temp(config["output_dir"] + "/dedup/chr{chrom}.vcf.gz")
     params:
-        plink = config["plink_path"],
-        bfile = config["bfile"],
-        out_prefix = config["output_dir"] + "/dedup/chr{chrom}",
-        chr = "{chrom}",
+        plink       = config["plink_path"],
+        bfile       = config["bfile"],
+        out_prefix  = config["output_dir"] + "/dedup/chr{chrom}",
+        chr         = "{chrom}",
         extra_flags = config.get("plink_extra_flags", "")
     log:
         "logs/dedup_chr{chrom}.log"
@@ -50,6 +80,10 @@ rule make_per_chrom_vcf:
             --snps-only) &> {log}
         """
 
+# ---------------------------------------------------------------------------
+# Deduplication and normalisation
+# ---------------------------------------------------------------------------
+
 rule normalize_vcf:
     input:
         vcf = rules.make_per_chrom_vcf.output.vcf
@@ -66,30 +100,41 @@ rule normalize_vcf:
         (bcftools norm -d snps {input.vcf} | \
          bgzip > {output.vcf}) 2> {log}
 
-         tabix -f -p vcf {output.vcf}
+        tabix -f -p vcf {output.vcf}
         """
 
-if config.get("reference_vcf", "").strip():  # If ref provided, remove unique target variants and flip strand in target to match reference
-    include: "rules/intersect_and_conform.smk"
-    
+# ---------------------------------------------------------------------------
+# Beagle imputation
+# ---------------------------------------------------------------------------
+
 rule run_beagle:
     input:
         vcf = branch(
-            lambda _: config.get("reference_vcf", "").strip(),
-            then=config["output_dir"] + "/harmonized/chr{chrom}.vcf.gz",
-            otherwise=rules.normalize_vcf.output.vcf
+            lambda _: _use_ref,
+            then      = config["output_dir"] + "/harmonized/chr{chrom}.vcf.gz",
+            otherwise = rules.normalize_vcf.output.vcf
+        ),
+        # bref3 is a per-chromosome binary reference; only present when bref3_jar is set
+        bref3 = branch(
+            lambda _: _use_bref3,
+            then      = config["output_dir"] + "/bref3/chr{chrom}_ref.bref3",
+            otherwise = []
         )
     output:
-        vcf = temp(config["output_dir"] + "/imputed/chr{chrom}.vcf.gz"),
-        tbi = temp(config["output_dir"] + "/imputed/chr{chrom}.vcf.gz.tbi"),
-        impute_logs = temp(config["output_dir"] + "/imputed/chr{chrom}.log")
+        vcf = temp(config["output_dir"] + "/" + _beagle_subdir + "/chr{chrom}.vcf.gz"),
+        tbi = temp(config["output_dir"] + "/" + _beagle_subdir + "/chr{chrom}.vcf.gz.tbi")
     params:
-        beagle = config["beagle_jar"],
-        window = config["beagle_params"]["window"],
-        overlap = config["beagle_params"]["overlap"],
-        ne = config["beagle_params"]["ne"],
-        outbase = lambda wildcards: f"{config['output_dir']}/imputed/chr{wildcards.chrom}",
-        ref_param = f"ref={config['reference_vcf']}" if config.get("reference_vcf", "").strip() else ""
+        beagle    = config["beagle_jar"],
+        window    = config["beagle_params"]["window"],
+        overlap   = config["beagle_params"]["overlap"],
+        ne        = config["beagle_params"]["ne"],
+        outbase   = lambda wildcards: f"{config['output_dir']}/{_beagle_subdir}/chr{wildcards.chrom}",
+        ref_param = (
+            lambda wildcards, input:
+                f"ref={input.bref3}" if _use_bref3
+                else f"ref={config['reference_vcf']}" if _use_ref
+                else ""
+        )
     threads: config["beagle_params"]["nthreads"]
     conda:
         "envs/workflow_env.yaml"
@@ -116,7 +161,52 @@ rule run_beagle:
         tabix -f {output.vcf}
         """
 
-# Add the new concatenation rule
+# ---------------------------------------------------------------------------
+# Merge imputed markers with target-only markers (ref mode only)
+#
+# Beagle with ref= outputs only markers present in the reference panel.
+# This rule merges those back with chip markers that were not in the
+# reference (0000.vcf.gz from bcftools_isec), so the final imputed/
+# VCF contains all original chip markers plus any imputed from the ref.
+# ---------------------------------------------------------------------------
+
+if _use_ref:
+    rule merge_imputed_with_target_only:
+        input:
+            imputed         = config["output_dir"] + "/" + _beagle_subdir + "/chr{chrom}.vcf.gz",
+            imputed_tbi     = config["output_dir"] + "/" + _beagle_subdir + "/chr{chrom}.vcf.gz.tbi",
+            target_only     = config["output_dir"] + "/intersect/chr{chrom}_temp/0000.vcf.gz",
+            target_only_tbi = config["output_dir"] + "/intersect/chr{chrom}_temp/0000.vcf.gz.tbi"
+        output:
+            vcf = temp(config["output_dir"] + "/imputed/chr{chrom}.vcf.gz"),
+            tbi = temp(config["output_dir"] + "/imputed/chr{chrom}.vcf.gz.tbi")
+        conda:
+            "envs/workflow_env.yaml"
+        log:
+            "logs/merge_imputed_chr{chrom}.log"
+        resources:
+            mem_mb = 16000
+        shell:
+            """
+            (bcftools concat \
+                --allow-overlaps \
+                -O u \
+                {input.imputed} \
+                {input.target_only} \
+            | bcftools sort \
+                -O z \
+                -m {resources.mem_mb}M \
+                -T $(dirname {output.vcf})/sort_tmp_chr{wildcards.chrom} \
+                -o {output.vcf}
+            ) 2> {log}
+
+            tabix -f {output.vcf}
+            """
+
+# ---------------------------------------------------------------------------
+# Concatenate all per-chromosome results
+# ---------------------------------------------------------------------------
+
 rule concat_chromosomes:
     input:
         vcfs = expand(
@@ -129,7 +219,6 @@ rule concat_chromosomes:
             output_dir=config["output_dir"],
             chrom=get_chroms()
         )
-
     output:
         vcf = config["output_dir"] + "/all_chromosomes.vcf.gz",
         tbi = config["output_dir"] + "/all_chromosomes.vcf.gz.tbi"
@@ -137,7 +226,7 @@ rule concat_chromosomes:
         "envs/workflow_env.yaml"
     threads: 4
     resources:
-        mem_mb=64000
+        mem_mb = 64000
     log:
         "logs/concat_chromosomes.log"
     shell:
@@ -151,7 +240,10 @@ rule concat_chromosomes:
         tabix -f {output.vcf}
         """
 
-# Add new rule for VCF to PLINK conversion
+# ---------------------------------------------------------------------------
+# Final VCF to PLINK binary
+# ---------------------------------------------------------------------------
+
 rule vcf_to_plink:
     input:
         vcf = config["output_dir"] + "/all_chromosomes.vcf.gz"
@@ -160,8 +252,8 @@ rule vcf_to_plink:
         bim = "plink_binary/imputed_data.bim",
         fam = "plink_binary/imputed_data.fam"
     params:
-        plink = config["plink_path"],
-        out_prefix = lambda wildcards, output: output.bed.rsplit('.', 1)[0],
+        plink       = config["plink_path"],
+        out_prefix  = lambda wildcards, output: output.bed.rsplit('.', 1)[0],
         extra_flags = config.get("plink_extra_flags", "")
     log:
         "logs/vcf_to_plink.log"
