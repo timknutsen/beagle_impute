@@ -1,0 +1,54 @@
+# ============================================================
+# Imputation accuracy evaluation configuration
+# ============================================================
+# Run with: snakemake --snakefile Snakefile_accuracy [options]
+#
+# This workflow evaluates how accurately the pipeline imputes
+# genotypes by comparing imputed calls against known truth.
+#
+# Two modes are supported:
+#
+#   mask_and_impute  — take your existing bfile, withhold a fraction of
+#                      animals, mask them to a lower SNP density, impute,
+#                      and compare back to their true high-density genotypes.
+#                      Good for: cross-validation, testing whether your
+#                      imputation parameters are appropriate.
+#
+#   cross_array      — provide the same animals genotyped on two different
+#                      arrays (low-density and high-density). Impute from
+#                      the low-density array and compare to the high-density
+#                      truth. Good for: evaluating accuracy across a real
+#                      array transition (e.g. 50K → 700K).
+
+# ── Mode ─────────────────────────────────────────────────────────────────────
+# Choose one: "mask_and_impute" or "cross_array"
+accuracy_mode: "mask_and_impute"
+
+accuracy_output_dir: "accuracy_output"
+
+# ── mask_and_impute settings ─────────────────────────────────────────────────
+mask:
+  # --- Low-density SNP panel (choose one) ---
+  # Provide a file of SNP IDs (one per line) to use as the low-density panel:
+  target_snp_list: ""          # e.g. "resources/50k_snp_list.txt"
+  # OR randomly sample N SNPs from the bfile to simulate a low-density array:
+  target_n_snps: 50000
+
+  # --- Validation animals (choose one) ---
+  # Provide a 2-column FID/IID file of animals to withhold as the validation set:
+  validation_animals: ""       # e.g. "resources/validation_ids.txt"
+  # OR randomly withhold a fraction of animals:
+  validation_fraction: 0.2     # 20% withheld as validation; 80% used as reference
+
+# ── cross_array settings ─────────────────────────────────────────────────────
+cross_array:
+  ld_bfile: ""                 # PLINK prefix of low-density array (imputation input)
+                               # e.g. "data/animals_50k"
+  hd_bfile: ""                 # PLINK prefix of high-density array (truth)
+                               # e.g. "data/animals_700k"
+
+# ── Accuracy metric settings ─────────────────────────────────────────────────
+# MAF bin boundaries for stratified accuracy reporting.
+# Each bin is [left, right); the last bin closes at 0.5.
+# Default gives bins: 0-1%, 1-5%, 5-10%, 10-20%, 20-50%
+maf_bins: [0.01, 0.05, 0.1, 0.2, 0.5]

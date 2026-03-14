@@ -1,0 +1,52 @@
+# Snakefile_accuracy — imputation accuracy evaluation
+#
+# Evaluates how accurately the pipeline imputes genotypes by comparing
+# imputed calls against known-truth genotypes.
+#
+# Usage:
+#   snakemake --snakefile Snakefile_accuracy --use-conda --cores 8
+#
+# Two modes (set accuracy_mode in config_accuracy.yaml):
+#
+#   mask_and_impute  Mask a fraction of your animals to a lower SNP density,
+#                    impute them, compare to their true high-density genotypes.
+#
+#   cross_array      Same animals genotyped on two arrays. Impute from the
+#                    low-density array and compare to the high-density truth.
+#
+# Tool configuration (beagle_jar, plink_path, etc.) is inherited from the
+# main config.yaml; accuracy-specific settings come from config_accuracy.yaml.
+
+configfile: "config.yaml"
+configfile: "config_accuracy.yaml"
+
+import pandas as pd
+
+_acc_mode = config.get("accuracy_mode", "mask_and_impute")
+_acc_out  = config.get("accuracy_output_dir", "accuracy_output")
+
+
+def acc_get_chromosomes():
+    """
+    Return sorted chromosome list from the source bfile.
+    For mask_and_impute the source is config["bfile"];
+    for cross_array it is the LD bfile.
+    Chromosomes in masked / subsetted files are always a subset of the source.
+    """
+    if _acc_mode == "cross_array":
+        bfile = config["cross_array"]["ld_bfile"]
+    else:
+        bfile = config["bfile"]
+    bim = pd.read_csv(f"{bfile}.bim", sep="\t", header=None)
+    return sorted([c for c in bim[0].unique() if c != 0], key=int)
+
+
+include: "rules/accuracy.smk"
+
+
+rule accuracy_all:
+    input:
+        _acc_out + "/summary.tsv",
+        _acc_out + "/metrics_by_maf_bin.tsv",
+        _acc_out + "/metrics_by_snp.tsv",
+        _acc_out + "/metrics_by_individual.tsv",

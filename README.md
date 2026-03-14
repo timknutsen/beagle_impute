@@ -83,7 +83,42 @@ For SLURM cluster execution, see `snakemake_slurm_example.sh` and add `--set-res
 - Intermediate AlphaImpute2 files: `vcf_output/alphaimpute2_input/` and `vcf_output/alphaimpute2_output/`
 - Logs: `logs/`
 
-## 6. Notes
+## 6. Testing
+
+The test suite lives in `tests/` and uses [pytest](https://docs.pytest.org). No pipeline tools (plink2, Beagle, AlphaImpute2) are required for the default test run.
+
+### Running the tests
+
+```bash
+# Activate the workflow conda env (has pytest) and run from the repo root:
+conda activate workflow_env
+pytest
+
+# Or install pytest standalone:
+pip install pytest && pytest
+```
+
+### What gets tested
+
+| Test file | What it covers | External tools needed |
+|-----------|---------------|----------------------|
+| `test_convert.py` (pure-Python group) | `GT_MAP` encoding, `read_bim`, `read_ai2_genotypes`, pedigree column format, genotype roundtrip against fixture matrix | None |
+| `test_convert.py` (`TestConvertRoundtrip`) | Full `convert()` call: bgzipped VCF content, REF/ALT allele direction, GT strings, tabix index creation, mismatch error | `bgzip`, `tabix` (htslib) |
+| `test_dryrun.py` | Snakemake DAG validation for Beagle (no ref), Beagle (with ref), and AlphaImpute2 modes — confirms rules resolve without executing anything | `snakemake` |
+
+Tests that require missing tools are **automatically skipped** with a clear reason — they never fail due to a missing binary.
+
+### Synthetic test dataset
+
+The test fixtures in `tests/conftest.py` generate a small synthetic PLINK binary **at test time in a temp directory** — no binary files are stored in git. The dataset is:
+
+- **12 individuals**: 4 fully-genotyped founders (`sire1`, `sire2`, `dam1`, `dam2`) + 8 offspring with known parents and 25% missingness
+- **80 SNPs** across 2 chromosomes (40 each), positions spaced 10 kbp apart
+- **Deterministic** (fixed random seed), so failures are reproducible
+
+This pedigree structure allows meaningful tests of both the genotype encoding logic and the pedigree file format required by AlphaImpute2.
+
+## 7. Notes
 
 ### AlphaImpute2 key parameters
 
