@@ -30,14 +30,34 @@ _beagle_subdir = "imputed_ref" if _use_ref else "imputed"
 _use_alphaimpute2 = config.get("imputer", "beagle") == "alphaimpute2"
 
 # ---------------------------------------------------------------------------
-# Conditional includes
+# Auto-download helpers
+# If the configured jar path starts with "bin/", treat it as auto-managed and
+# add it as an explicit input dependency so Snakemake downloads it first.
+# Users with existing JARs can point config to any absolute path and these
+# download rules are never triggered.
 # ---------------------------------------------------------------------------
 
-if _use_ref:
-    include: "rules/intersect_and_conform.smk"
+_BEAGLE_URL    = "https://faculty.washington.edu/browning/beagle/beagle.17Dec24.jar"
+_CONFORM_URL   = "https://faculty.washington.edu/browning/conform-gt/conform-gt.24May16.cee.jar"
 
-if _use_alphaimpute2:
-    include: "rules/alphaimpute2.smk"
+_beagle_jar  = config.get("beagle_jar",    "bin/beagle.jar")
+_conform_jar = config.get("conform_gt_jar", "bin/conform-gt.jar")
+
+
+def _auto_download(path, url):
+    """Download *url* to *path* if path starts with 'bin/' and does not exist."""
+    import os, subprocess as sp
+    if path.startswith("bin/") and not os.path.exists(path):
+        os.makedirs("bin", exist_ok=True)
+        print(f"Downloading {url} → {path}")
+        sp.run(["wget", "-q", "-O", path, url], check=True)
+
+
+onstart:
+    if not _use_alphaimpute2:
+        _auto_download(_beagle_jar, _BEAGLE_URL)
+    if _use_ref:
+        _auto_download(_conform_jar, _CONFORM_URL)
 
 # ---------------------------------------------------------------------------
 # Shared helpers: resolve final imputed VCF path (used by vcf_to_plink)
@@ -96,6 +116,8 @@ rule make_per_chrom_vcf:
         out_prefix  = config["output_dir"] + "/dedup/chr{chrom}",
         chr         = "{chrom}",
         extra_flags = config.get("plink_extra_flags", "")
+    conda:
+        "envs/workflow_env.yaml"
     log:
         "logs/dedup_chr{chrom}.log"
     threads: 1
@@ -287,6 +309,8 @@ rule vcf_to_plink:
         plink       = config["plink_path"],
         out_prefix  = lambda wildcards, output: output.bed.rsplit('.', 1)[0],
         extra_flags = config.get("plink_extra_flags", "")
+    conda:
+        "envs/workflow_env.yaml"
     log:
         "logs/vcf_to_plink.log"
     shell:
@@ -299,3 +323,13 @@ rule vcf_to_plink:
             --allow-no-sex \
             --const-fid) &> {log}
         """
+
+# ---------------------------------------------------------------------------
+# Conditional includes (placed after all rules so rules.xxx references resolve)
+# ---------------------------------------------------------------------------
+
+if _use_ref:
+    include: "rules/intersect_and_conform.smk"
+
+if _use_alphaimpute2:
+    include: "rules/alphaimpute2.smk"

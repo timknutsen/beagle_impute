@@ -11,3 +11,10 @@ logs/
 # Pipeline outputs (generated data, not source)
 vcf_output/
 plink_binary/
+
+# SLURM and temp files
+slurm-*.out
+*.bak
+
+# Auto-downloaded tool JARs
+bin/

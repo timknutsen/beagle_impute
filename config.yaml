@@ -12,10 +12,10 @@ reference_vcf: ""                        # (Optional) phased reference VCF for h
 # --- Output ---
 output_dir: "vcf_output"
 
-# --- Tool paths (must be set by user) ---
-plink_path: "plink2"                     # Path to PLINK2 executable (or just "plink2" if on PATH)
-beagle_jar: ""                           # Path to Beagle JAR, e.g. /tools/beagle.17Dec24.jar
-conform_gt_jar: ""                       # Path to conform-gt JAR (only needed if reference_vcf is set)
+# --- Tool paths ---
+plink_path: "plink2"                     # plink2 is installed via envs/workflow_env.yaml; override if needed
+beagle_jar: "bin/beagle.jar"            # Auto-downloaded on first run; override with an existing JAR path
+conform_gt_jar: "bin/conform-gt.jar"    # Auto-downloaded on first run (only used if reference_vcf is set)
 bref3_jar: ""                            # (Optional) Path to bref3.jar for faster reference loading.
                                          # Convert VCF ref panel to bref3 once; Beagle reads it 3-43x faster.
                                          # Get bref3.jar from the same page as the Beagle JAR.

@@ -69,6 +69,31 @@ snakemake --use-conda --cores 8
 
 For SLURM cluster execution, see `snakemake_slurm_example.sh` and add `--set-resources` flags for partition names as needed.
 
+### Real-world example: Rainbow trout with reference panel
+
+Impute a small trout cohort (105 fish, 47k SNPs) using a large phased reference panel (4,439 fish, 42k SNPs):
+
+```bash
+snakemake --use-conda --cores 8 \
+    --config \
+        bfile="/mnt/efshome/aquagen/projects/AG_global_breeding/Rainbowtrout/issue_191_trout_parent_control/test_output.filtered_miss_hwe" \
+        reference_vcf="/mnt/efshome/aquagen/projects/AG_global_breeding/Rainbowtrout/latemat_trout_2023/6159_regnbueorret_nye_arter/all_batches_clean_good_probes_merged.PHASED.vcf.gz" \
+        output_dir="issue_191_ref_imputed"
+```
+
+For a large cohort (25k fish, 55k SNPs) without a reference panel, run on SLURM:
+
+```bash
+snakemake --use-conda \
+    --cores 48 \
+    --executor slurm \
+    --jobs 35 \
+    --group-components beagle=5 \
+    --config \
+        bfile="/mnt/efshome/aquagen/projects/AG_global_breeding/Rainbowtrout/RT24/plink/RT24_fish" \
+        output_dir="RT24_imputed"
+```
+
 ## 5. Outputs
 
 - Per-chromosome imputed VCFs: `vcf_output/imputed/chr{chrom}.vcf.gz`
