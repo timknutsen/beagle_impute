@@ -12,6 +12,14 @@ def get_chromosomes(bfile):
 def get_chroms():
     return get_chromosomes(config["bfile"])
 
+_use_ref   = bool(config.get("reference_vcf", "").strip())
+_use_bref3 = bool(config.get("bref3_jar", "").strip()) and _use_ref
+
+# When a reference is used, Beagle outputs to imputed_ref/ (markers at ref positions only).
+# The merge_with_target_only rule then combines those with target-only markers into imputed/.
+# When no reference is used, Beagle outputs directly to imputed/.
+_beagle_subdir = "imputed_ref" if _use_ref else "imputed"
+
 rule all:
     input:
         expand(
@@ -69,27 +77,33 @@ rule normalize_vcf:
          tabix -f -p vcf {output.vcf}
         """
 
-if config.get("reference_vcf", "").strip():  # If ref provided, remove unique target variants and flip strand in target to match reference
+if _use_ref:
     include: "rules/intersect_and_conform.smk"
-    
+
 rule run_beagle:
     input:
         vcf = branch(
             lambda _: config.get("reference_vcf", "").strip(),
             then=config["output_dir"] + "/harmonized/chr{chrom}.vcf.gz",
             otherwise=rules.normalize_vcf.output.vcf
-        )
+        ),
+        # When bref3_jar is configured the reference is pre-converted to bref3 for faster loading
+        bref3 = ([config["output_dir"] + "/ref/reference.bref3"] if _use_bref3 else [])
     output:
-        vcf = temp(config["output_dir"] + "/imputed/chr{chrom}.vcf.gz"),
-        tbi = temp(config["output_dir"] + "/imputed/chr{chrom}.vcf.gz.tbi"),
-        impute_logs = temp(config["output_dir"] + "/imputed/chr{chrom}.log")
+        vcf        = temp(config["output_dir"] + "/" + _beagle_subdir + "/chr{chrom}.vcf.gz"),
+        tbi        = temp(config["output_dir"] + "/" + _beagle_subdir + "/chr{chrom}.vcf.gz.tbi"),
+        impute_log = temp(config["output_dir"] + "/" + _beagle_subdir + "/chr{chrom}.log")
     params:
-        beagle = config["beagle_jar"],
-        window = config["beagle_params"]["window"],
+        beagle  = config["beagle_jar"],
+        window  = config["beagle_params"]["window"],
         overlap = config["beagle_params"]["overlap"],
-        ne = config["beagle_params"]["ne"],
-        outbase = lambda wildcards: f"{config['output_dir']}/imputed/chr{wildcards.chrom}",
-        ref_param = f"ref={config['reference_vcf']}" if config.get("reference_vcf", "").strip() else ""
+        ne      = config["beagle_params"]["ne"],
+        outbase = lambda wildcards: f"{config['output_dir']}/{_beagle_subdir}/chr{wildcards.chrom}",
+        ref_param = (
+            f"ref={config['output_dir']}/ref/reference.bref3" if _use_bref3
+            else f"ref={config['reference_vcf']}" if _use_ref
+            else ""
+        )
     threads: config["beagle_params"]["nthreads"]
     conda:
         "envs/workflow_env.yaml"
@@ -116,7 +130,6 @@ rule run_beagle:
         tabix -f {output.vcf}
         """
 
-# Add the new concatenation rule
 rule concat_chromosomes:
     input:
         vcfs = expand(
@@ -129,7 +142,6 @@ rule concat_chromosomes:
             output_dir=config["output_dir"],
             chrom=get_chroms()
         )
-
     output:
         vcf = config["output_dir"] + "/all_chromosomes.vcf.gz",
         tbi = config["output_dir"] + "/all_chromosomes.vcf.gz.tbi"
@@ -151,7 +163,6 @@ rule concat_chromosomes:
         tabix -f {output.vcf}
         """
 
-# Add new rule for VCF to PLINK conversion
 rule vcf_to_plink:
     input:
         vcf = config["output_dir"] + "/all_chromosomes.vcf.gz"
