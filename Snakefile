@@ -1,11 +1,9 @@
-# Load configuration
-configfile: "/mnt/efshome/aquagen/code/timknu/workflows/beagle_impute/config.yaml"
+configfile: "config.yaml"
 
-localrules: make_per_chrom_vcf, normalize_vcf, concat_chromosomes, vcf_to_plink
+import pandas as pd
 
 # Helper function to get chromosomes from bim file
 def get_chromosomes(bfile):
-    import pandas as pd
     bim = pd.read_csv(f"{bfile}.bim", sep='\t', header=None)
     chroms = [chr for chr in bim[0].unique() if chr != 0]
     return sorted(chroms, key=int)
@@ -14,7 +12,6 @@ def get_chromosomes(bfile):
 def get_chroms():
     return get_chromosomes(config["bfile"])
 
-# Rest of your rules remain the same, but reference config directly
 rule all:
     input:
         expand(
@@ -23,34 +20,32 @@ rule all:
             chrom=get_chroms()
         ),
         config["output_dir"] + "/all_chromosomes.vcf.gz",
+        config["output_dir"] + "/all_chromosomes.vcf.gz.tbi",
         "plink_binary/imputed_data.bed"
 
 rule make_per_chrom_vcf:
     input:
         bed = config["bfile"] + ".bed"
     output:
-        vcf = temp(config["output_dir"] + "/dedup" + "/chr{chrom}.vcf.gz"),
-        logs = temp(config["output_dir"] + "/dedup" + "/chr{chrom}.log")
+        vcf = temp(config["output_dir"] + "/dedup" + "/chr{chrom}.vcf.gz")
     params:
         plink = config["plink_path"],
         bfile = config["bfile"],
         out_prefix = config["output_dir"] + "/dedup/chr{chrom}",
-        chr = "{chrom}"
+        chr = "{chrom}",
+        extra_flags = config.get("plink_extra_flags", "")
     log:
         "logs/dedup_chr{chrom}.log"
     threads: 1
-    resources:
-        slurm_partition="r6i-ondemand-xlarge",
     shell:
-        """        
+        """
         ({params.plink} \
             --nonfounders \
             --allow-no-sex \
             --bfile {params.bfile} \
             --chr {params.chr} \
             --export vcf bgz \
-            --dog \
-            --aec \
+            {params.extra_flags} \
             --out {params.out_prefix} \
             --snps-only) &> {log}
         """
@@ -66,10 +61,8 @@ rule normalize_vcf:
     log:
         "logs/normalize_chr{chrom}.log"
     threads: 1
-    resources:
-        slurm_partition="r6i-ondemand-2xlarge",
     shell:
-        """        
+        """
         (bcftools norm -d snps {input.vcf} | \
          bgzip > {output.vcf}) 2> {log}
 
@@ -103,8 +96,7 @@ rule run_beagle:
     log:
         "logs/beagle_chr{chrom}.log"
     resources:
-        mem_mb = 70000,
-        slurm_partition = "r6i-ondemand-12xlarge"
+        mem_mb = 70000
     group:
         "beagle"
     shell:
@@ -139,12 +131,12 @@ rule concat_chromosomes:
         )
 
     output:
-        vcf = config["output_dir"] + "/all_chromosomes.vcf.gz"
+        vcf = config["output_dir"] + "/all_chromosomes.vcf.gz",
+        tbi = config["output_dir"] + "/all_chromosomes.vcf.gz.tbi"
     conda:
         "envs/workflow_env.yaml"
     threads: 4
     resources:
-        slurm_partition="r6i-ondemand-2xlarge",
         mem_mb=64000
     log:
         "logs/concat_chromosomes.log"
@@ -155,6 +147,8 @@ rule concat_chromosomes:
             --output-type z \
             --threads {threads} \
             {input.vcfs}) 2> {log}
+
+        tabix -f {output.vcf}
         """
 
 # Add new rule for VCF to PLINK conversion
@@ -167,7 +161,8 @@ rule vcf_to_plink:
         fam = "plink_binary/imputed_data.fam"
     params:
         plink = config["plink_path"],
-        out_prefix = lambda wildcards, output: output.bed.rsplit('.', 1)[0]
+        out_prefix = lambda wildcards, output: output.bed.rsplit('.', 1)[0],
+        extra_flags = config.get("plink_extra_flags", "")
     log:
         "logs/vcf_to_plink.log"
     shell:
@@ -176,7 +171,7 @@ rule vcf_to_plink:
             --vcf {input.vcf} \
             --make-bed \
             --out {params.out_prefix} \
-            --dog \
+            {params.extra_flags} \
             --allow-no-sex \
             --const-fid) &> {log}
         """

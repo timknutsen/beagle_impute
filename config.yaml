@@ -1,0 +1,34 @@
+# ============================================================
+# beagle_impute configuration
+# ============================================================
+# Edit this file or override individual values on the command line:
+#   snakemake --config bfile=/path/to/mydata plink_path=/path/to/plink2
+
+# --- Input ---
+bfile: "tests/data/test_salmon"         # Prefix of PLINK .bed/.bim/.fam files
+reference_vcf: ""                        # (Optional) phased reference VCF for harmonization;
+                                         # leave empty to skip bcftools_isec + conform-gt steps
+
+# --- Output ---
+output_dir: "vcf_output"
+
+# --- Tool paths (must be set by user) ---
+plink_path: "plink2"                     # Path to PLINK2 executable (or just "plink2" if on PATH)
+beagle_jar: ""                           # Path to Beagle JAR, e.g. /tools/beagle.17Dec24.jar
+conform_gt_jar: ""                       # Path to conform-gt JAR (only needed if reference_vcf is set)
+
+# --- Extra PLINK flags ---
+# Add species- or dataset-specific flags here, e.g.:
+#   "--dog --aec"   for canine data with non-standard chromosome names
+#   ""              for standard human or most other species
+plink_extra_flags: ""
+
+# --- Beagle parameters ---
+beagle_params:
+  window: 80        # Window size in cM (default Beagle 5.5 is 40; 80 gives more LD context)
+  overlap: 20       # Overlap between windows in cM (~25% of window is recommended)
+  ne: 500           # Effective population size. Set to match your study species:
+                    #   ~500        salmon, small livestock populations
+                    #   ~1000       cattle, dogs
+                    #   ~1,000,000  large outbred human populations (Beagle default)
+  nthreads: 4       # Threads for Beagle. Match to cluster/local CPU allocation.

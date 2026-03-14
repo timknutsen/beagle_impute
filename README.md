@@ -1,73 +1,69 @@
 
 # Chromosome-wise Imputation Pipeline
 
-This pipeline converts PLINK files to VCF per chromosome, optionally harmonizes against a reference VCF, and imputes with Beagle.
+This pipeline converts PLINK files to VCF per chromosome, optionally harmonizes against a reference VCF, and imputes with Beagle 5.5.
 
 ## 1. Requirements
 
 - **Conda** and **Snakemake** installed
-- Everything else (PLINK, bcftools, Java, etc.) is automatically handled by Snakemake via `envs/workflow_env.yaml`.
+- **PLINK2** and **Beagle 5.5 JAR** (see paths in `config.yaml`)
+- Everything else (bcftools, pandas, Java) is installed automatically via `envs/workflow_env.yaml`
 
 ## 2. Configuration
 
-Inside the **Snakefile**, we have the following default `config`:
+Edit `config.yaml` in the repository root before running. The key parameters to set:
 
-```python
-localrules: make_per_chrom_vcf, normalize_vcf, concat_chromosomes, vcf_to_plink
+```yaml
+bfile: "path/to/your/data"          # PLINK prefix (without .bed/.bim/.fam)
+reference_vcf: ""                    # Optional phased reference VCF; leave empty to skip harmonization
+output_dir: "vcf_output"
 
-config = {
-    # Paths that typically need changing
-    "bfile": "tests/data/test_salmon",
-    "reference_vcf": "tests/data/test_salmon_ref.PHASED.vcf.gz",  # (Optional) path to reference VCF
+plink_path: "plink2"                 # Path to PLINK2 executable
+beagle_jar: "/path/to/beagle.17Dec24.jar"   # Latest Beagle 5.5 JAR
+conform_gt_jar: ""                   # Only needed if reference_vcf is set
 
-    # Default paths and parameters
-    "plink_path": "/mnt/efshome/home/timknu/bioinf_tools/plink2.0/plink2",
-    "beagle_jar": "/mnt/efshome/home/timknu/bioinf_tools/beagle5.5/beagle.17Dec24.224.jar",
-    "output_dir": "vcf_output",
-    "beagle_params": {
-        "window": 80,
-        "overlap": 10,
-        "ne": 500,
-        "nthreads": 1
-    },
-    "conform_gt_jar": "/mnt/efshome/home/timknu/bioinf_tools/conform-gt.24May16.cee.jar"
-}
+# Species-specific PLINK flags (default: none)
+# Examples:
+#   "--dog --aec"   for canine data with non-standard chromosome names
+#   ""              for human or most other species
+plink_extra_flags: ""
+
+beagle_params:
+  window: 80       # Window size in cM (Beagle default is 40; 80 gives more LD context)
+  overlap: 20      # Overlap between windows in cM (~25% of window is recommended)
+  ne: 500          # Effective population size — tune to your species:
+                   #   ~500 for salmon/small livestock, ~1000 for cattle/dogs,
+                   #   ~1,000,000 for large outbred human populations (Beagle default)
+  nthreads: 4      # Beagle threads — match to your CPU/cluster allocation
 ```
 
-### Key Parameters
-- **`bfile`**: Prefix of your PLINK `.bed/.bim/.fam`
-- **`reference_vcf`**: (Optional) Reference panel VCF for harmonization
-- **`plink_path`**: Location of PLINK2 executable
-- **`beagle_jar`**: Path to Beagle JAR file
-- **`conform_gt_jar`**: Path to conform-gt JAR (only used if `reference_vcf` is set)
+You can also override individual values on the command line without editing the file:
 
-You can override these in your terminal:
 ```bash
-snakemake --use-conda \
-          --cores 8 \
+snakemake --use-conda --cores 8 \
           --config bfile=/path/to/mydata \
-                   reference_vcf=/path/to/ref.vcf.gz \
+                   beagle_jar=/path/to/beagle.17Dec24.jar \
                    plink_path=/path/to/plink2
 ```
 
 ## 3. Running the Pipeline
 
-1. **Clone** this repository and ensure `Snakefile` + `envs/workflow_env.yaml` are present.
-2. **Check** or **override** the `config` paths above.
-3. **Run**:
-   ```bash
-   snakemake --use-conda --cores 8
-   ```
-   (Add `--executor slurm`, resource settings, or job grouping as needed.)
+```bash
+snakemake --use-conda --cores 8
+```
+
+For SLURM cluster execution, see `snakemake_slurm_example.sh` and add `--set-resources` flags for partition names as needed.
 
 ## 4. Outputs
 
 - Per-chromosome imputed VCFs: `vcf_output/imputed/chr{chrom}.vcf.gz`
-- Single combined VCF: `vcf_output/all_chromosomes.vcf.gz`
+- Single combined VCF + index: `vcf_output/all_chromosomes.vcf.gz` (+ `.tbi`)
 - Final PLINK files: `plink_binary/imputed_data.bed/.bim/.fam`
+- Logs per step and chromosome: `logs/`
 
 ## 5. Notes
 
-- **Harmonization** (bcftools + conform-gt) only runs if `reference_vcf` is specified.
-- **Logs** are written to `logs/` per step and per chromosome.
-- The `beagle_params` (e.g. `nthreads`) should match the resources allocated on your cluster or local machine.
+- **Harmonization** (bcftools isec + conform-gt) only runs if `reference_vcf` is set.
+- **`ne`** has a large effect on imputation accuracy for non-human populations. Use a value appropriate for your species — the Beagle default of 1,000,000 is designed for large outbred human populations and performs poorly for livestock and aquaculture species.
+- **`nthreads`** should match the number of CPUs you allocate. Beagle scales well with more threads — the default of 4 is a reasonable starting point; increase for cluster jobs.
+- **`plink_extra_flags`**: The previous default included `--dog --aec`, which are specific to canine data. Set these only if your data requires them.
