@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Snakemake
+.snakemake/
+logs/
+
+# Pipeline outputs (generated data, not source)
+vcf_output/
+plink_binary/
