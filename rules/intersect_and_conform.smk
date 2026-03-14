@@ -1,13 +1,14 @@
 # file: rules/intersect_and_conform.smk
+
 rule bcftools_isec:
     input:
-        target = rules.normalize_vcf.output.vcf,
-        tbi = rules.normalize_vcf.output.tbi,
+        target    = rules.normalize_vcf.output.vcf,
+        tbi       = rules.normalize_vcf.output.tbi,
         reference = config.get("reference_vcf", "")
     output:
-        vcf         = config["output_dir"] + "/intersect/chr{chrom}_temp/0002.vcf.gz",
-        tbi         = config["output_dir"] + "/intersect/chr{chrom}_temp/0002.vcf.gz.tbi",
-        target_only = config["output_dir"] + "/intersect/chr{chrom}_temp/0000.vcf.gz",
+        vcf             = config["output_dir"] + "/intersect/chr{chrom}_temp/0002.vcf.gz",
+        tbi             = config["output_dir"] + "/intersect/chr{chrom}_temp/0002.vcf.gz.tbi",
+        target_only     = config["output_dir"] + "/intersect/chr{chrom}_temp/0000.vcf.gz",
         target_only_tbi = config["output_dir"] + "/intersect/chr{chrom}_temp/0000.vcf.gz.tbi"
     params:
         out_prefix = config["output_dir"] + "/intersect/chr{chrom}_temp"
@@ -25,6 +26,7 @@ rule bcftools_isec:
             {input.target} \
             {input.reference}) 2> {log}
 
+        tabix -f {output.vcf}
         tabix -f {output.target_only}
         """
 
@@ -36,13 +38,13 @@ rule conform_gt:
         vcf = temp(config["output_dir"] + "/harmonized/chr{chrom}.vcf.gz")
     params:
         conform_jar = config.get("conform_gt_jar", ""),
-        outbase = config['output_dir'] + "/harmonized/chr{chrom}"
+        outbase     = config["output_dir"] + "/harmonized/chr{chrom}"
     conda:
         "../envs/workflow_env.yaml"
     log:
         "logs/conform_gt_chr{chrom}.log"
     resources:
-        mem_mb = 32000,
+        mem_mb  = 32000,
         runtime = 60
     shell:
         """
@@ -61,43 +63,25 @@ rule conform_gt:
         fi
         """
 
-# Merge Beagle-imputed markers (ref intersection) with target-only markers
-# (markers in target not in reference, kept as-is from the chip data)
-rule merge_with_target_only:
+# Convert one chromosome of the reference VCF to bref3 binary format.
+# Beagle reads bref3 3-43x faster than VCF depending on reference panel size.
+# Only included when bref3_jar is configured (see _use_bref3 flag in Snakefile).
+rule convert_ref_to_bref3:
     input:
-        imputed     = config["output_dir"] + "/imputed_ref/chr{chrom}.vcf.gz",
-        imputed_tbi = config["output_dir"] + "/imputed_ref/chr{chrom}.vcf.gz.tbi",
-        target_only = rules.bcftools_isec.output.target_only,
-        target_only_tbi = rules.bcftools_isec.output.target_only_tbi
+        reference = config.get("reference_vcf", "")
     output:
-        vcf = temp(config["output_dir"] + "/imputed/chr{chrom}.vcf.gz"),
-        tbi = temp(config["output_dir"] + "/imputed/chr{chrom}.vcf.gz.tbi")
+        bref3 = config["output_dir"] + "/bref3/chr{chrom}_ref.bref3"
+    params:
+        bref3_jar = config.get("bref3_jar", "")
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/merge_imputed_chr{chrom}.log"
+        "logs/bref3_chr{chrom}.log"
+    resources:
+        mem_mb = 16000
     shell:
         """
-        (bcftools concat --allow-overlaps \
-            {input.imputed} \
-            {input.target_only} | \
-        bcftools sort | \
-        bgzip > {output.vcf}) 2> {log}
-
-        tabix -f {output.vcf}
+        (bcftools view -r {wildcards.chrom} -O z {input.reference} \
+            | java -jar {params.bref3_jar} /dev/stdin \
+            > {output.bref3}) 2> {log}
         """
-
-if config.get("bref3_jar", "").strip():
-    rule convert_ref_to_bref3:
-        input:
-            ref = config.get("reference_vcf", "")
-        output:
-            bref3 = config["output_dir"] + "/ref/reference.bref3"
-        params:
-            bref3_jar = config["bref3_jar"]
-        conda:
-            "../envs/workflow_env.yaml"
-        log:
-            "logs/convert_ref_to_bref3.log"
-        shell:
-            "java -jar {params.bref3_jar} {input.ref} > {output.bref3} 2> {log}"
