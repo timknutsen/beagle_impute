@@ -4,6 +4,7 @@ channels:
   - bioconda
   - defaults
 dependencies:
-  - openjdk=8
+  - openjdk>=11
   - htslib
   - bcftools
+  - pandas
