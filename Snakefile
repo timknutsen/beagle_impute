@@ -27,6 +27,8 @@ _use_bref3 = _use_ref and bool(config.get("bref3_jar", "").strip())
 # expects in both modes, so no downstream rule changes are needed.
 _beagle_subdir = "imputed_ref" if _use_ref else "imputed"
 
+_use_alphaimpute2 = config.get("imputer", "beagle") == "alphaimpute2"
+
 # ---------------------------------------------------------------------------
 # Conditional includes
 # ---------------------------------------------------------------------------
@@ -34,20 +36,50 @@ _beagle_subdir = "imputed_ref" if _use_ref else "imputed"
 if _use_ref:
     include: "rules/intersect_and_conform.smk"
 
+if _use_alphaimpute2:
+    include: "rules/alphaimpute2.smk"
+
+# ---------------------------------------------------------------------------
+# Shared helpers: resolve final imputed VCF path (used by vcf_to_plink)
+# ---------------------------------------------------------------------------
+
+# AlphaImpute2 produces a single genome-wide VCF; Beagle produces per-chrom
+# VCFs that are concatenated. Both land in the same variable so vcf_to_plink
+# needs no conditional logic.
+_final_vcf = (
+    config["output_dir"] + "/alphaimpute2/all_chromosomes.vcf.gz"
+    if _use_alphaimpute2
+    else config["output_dir"] + "/all_chromosomes.vcf.gz"
+)
+
+# rule all targets differ between imputers
+_rule_all_inputs = (
+    [
+        _final_vcf,
+        _final_vcf + ".tbi",
+        "plink_binary/imputed_data.bed",
+    ]
+    if _use_alphaimpute2
+    else
+    expand(
+        "{output_dir}/imputed/chr{chrom}.vcf.gz",
+        output_dir=config["output_dir"],
+        chrom=get_chroms(),
+    )
+    + [
+        config["output_dir"] + "/all_chromosomes.vcf.gz",
+        config["output_dir"] + "/all_chromosomes.vcf.gz.tbi",
+        "plink_binary/imputed_data.bed",
+    ]
+)
+
 # ---------------------------------------------------------------------------
 # rule all
 # ---------------------------------------------------------------------------
 
 rule all:
     input:
-        expand(
-            "{output_dir}/imputed/chr{chrom}.vcf.gz",
-            output_dir=config["output_dir"],
-            chrom=get_chroms()
-        ),
-        config["output_dir"] + "/all_chromosomes.vcf.gz",
-        config["output_dir"] + "/all_chromosomes.vcf.gz.tbi",
-        "plink_binary/imputed_data.bed"
+        _rule_all_inputs
 
 # ---------------------------------------------------------------------------
 # Per-chromosome VCF extraction from PLINK binary
@@ -246,7 +278,7 @@ rule concat_chromosomes:
 
 rule vcf_to_plink:
     input:
-        vcf = config["output_dir"] + "/all_chromosomes.vcf.gz"
+        vcf = _final_vcf
     output:
         bed = "plink_binary/imputed_data.bed",
         bim = "plink_binary/imputed_data.bim",

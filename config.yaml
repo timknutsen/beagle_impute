@@ -26,6 +26,12 @@ bref3_jar: ""                            # (Optional) Path to bref3.jar for fast
 #   ""              for standard human or most other species
 plink_extra_flags: ""
 
+# --- Imputer selection ---
+# Choose the imputation engine: "beagle" (default) or "alphaimpute2"
+#   beagle        — population LD-based; requires beagle_jar; good when no pedigree
+#   alphaimpute2  — pedigree + population; good for structured livestock/aquaculture
+imputer: "beagle"
+
 # --- Beagle parameters ---
 beagle_params:
   window: 80        # Window size in cM (default Beagle 5.5 is 40; 80 gives more LD context)
@@ -35,3 +41,16 @@ beagle_params:
                     #   ~1000       cattle, dogs
                     #   ~1,000,000  large outbred human populations (Beagle default)
   nthreads: 4       # Threads for Beagle. Match to cluster/local CPU allocation.
+
+# --- AlphaImpute2 parameters (used when imputer: "alphaimpute2") ---
+# AlphaImpute2 is installed automatically via pip in envs/alphaimpute2_env.yaml.
+# It requires no external JAR — just set imputer above and adjust the options below.
+alphaimpute2_params:
+  maxthreads: 4                   # Parallel threads
+  cycles: 4                       # Peeling rounds for pedigree imputation
+  final_peeling_threshold: 0.1    # Genotype calling confidence (0.1 = best-guess, 0.9+ = high-confidence only)
+  hd_threshold: 0.95              # Proportion non-missing markers to classify an individual as high-density
+  length: 1.0                     # Chromosome map length in Morgans (1.0 = 100 cM; adjust per species)
+  ped_only: false                 # true = skip population imputation, use pedigree only
+  pop_only: false                 # true = skip pedigree imputation, use population only
+  phase_output: false             # true = also write a .haplotypes phasing output file

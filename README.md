@@ -9,7 +9,18 @@ This pipeline converts PLINK files to VCF per chromosome, optionally harmonizes 
 - **PLINK2** and **Beagle 5.5 JAR** (see paths in `config.yaml`)
 - Everything else (bcftools, pandas, Java) is installed automatically via `envs/workflow_env.yaml`
 
-## 2. Configuration
+## 2. Choosing an Imputer
+
+The pipeline supports two imputation engines. Set `imputer` in `config.yaml`:
+
+| Setting | Engine | Best for |
+|---------|--------|----------|
+| `imputer: "beagle"` (default) | Beagle 5.5 | LD-based imputation; no pedigree needed |
+| `imputer: "alphaimpute2"` | AlphaImpute2 | Pedigree + population; structured livestock/aquaculture |
+
+AlphaImpute2 is installed automatically via pip inside `envs/alphaimpute2_env.yaml` — no JAR file needed. It requires Python 3.10 (3.12 and 3.14 are incompatible).
+
+## 3. Configuration
 
 Edit `config.yaml` in the repository root before running. The key parameters to set:
 
@@ -40,6 +51,8 @@ beagle_params:
   nthreads: 4      # Beagle threads — match to your CPU/cluster allocation
 ```
 
+For AlphaImpute2 mode, replace `beagle_jar` with the `alphaimpute2_params` block (see `config.yaml` comments) and set `imputer: "alphaimpute2"`. The `beagle_jar`, `conform_gt_jar`, and `bref3_jar` fields are ignored in this mode.
+
 You can also override individual values on the command line without editing the file:
 
 ```bash
@@ -49,7 +62,7 @@ snakemake --use-conda --cores 8 \
                    plink_path=/path/to/plink2
 ```
 
-## 3. Running the Pipeline
+## 4. Running the Pipeline
 
 ```bash
 snakemake --use-conda --cores 8
@@ -57,14 +70,30 @@ snakemake --use-conda --cores 8
 
 For SLURM cluster execution, see `snakemake_slurm_example.sh` and add `--set-resources` flags for partition names as needed.
 
-## 4. Outputs
+## 5. Outputs
 
 - Per-chromosome imputed VCFs: `vcf_output/imputed/chr{chrom}.vcf.gz`
 - Single combined VCF + index: `vcf_output/all_chromosomes.vcf.gz` (+ `.tbi`)
 - Final PLINK files: `plink_binary/imputed_data.bed/.bim/.fam`
 - Logs per step and chromosome: `logs/`
 
-## 5. Notes
+**AlphaImpute2 mode outputs** (`imputer: "alphaimpute2"`):
+- Genome-wide imputed VCF + index: `vcf_output/alphaimpute2/all_chromosomes.vcf.gz` (+ `.tbi`)
+- Final PLINK files: `plink_binary/imputed_data.bed/.bim/.fam`
+- Intermediate AlphaImpute2 files: `vcf_output/alphaimpute2_input/` and `vcf_output/alphaimpute2_output/`
+- Logs: `logs/`
+
+## 6. Notes
+
+### AlphaImpute2 key parameters
+
+- **`cycles`**: number of peeling rounds for pedigree imputation (default 4). Increasing to 6–8 can improve accuracy in deep pedigrees at the cost of runtime.
+- **`length`**: effective chromosome length in Morgans (default 1.0 = 100 cM). Adjust for species with unusually short or long chromosomes.
+- **`final_peeling_threshold`**: confidence cutoff for calling a genotype (0.1 = best-guess, 0.9+ = high-confidence only). Use higher values when downstream analyses require reliable homozygosity calls.
+- **`hd_threshold`**: proportion of non-missing genotypes required to use an individual as a high-density reference (default 0.95).
+- **`ped_only` / `pop_only`**: force pedigree-only or population-only imputation. Default uses both jointly.
+
+AlphaImpute2 processes all chromosomes in a single run (unlike Beagle, which is run per chromosome). The pipeline therefore produces a single genome-wide VCF rather than per-chromosome files in this mode.
 
 ### Reference panel behaviour
 When `reference_vcf` is set, the pipeline runs:
