@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Projects — Sandve Lab</title>
+  <meta name="description" content="Research projects at the Sandve Lab, NMBU." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Lora:ital,wght@0,600;0,700;1,500;1,600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+  <!-- ===== NAV ===== -->
+  <nav class="nav" role="navigation" aria-label="Main">
+    <div class="nav__inner">
+      <a href="index.html" class="nav__logo">
+        <span class="nav__logo-name">Sandve Lab</span>
+        <span class="nav__logo-sub">Genome Biology · NMBU</span>
+      </a>
+      <ul class="nav__links" role="list">
+        <li><a href="index.html"        class="nav__link">Home</a></li>
+        <li><a href="people.html"       class="nav__link">People</a></li>
+        <li><a href="publications.html" class="nav__link">Publications</a></li>
+        <li><a href="projects.html"     class="nav__link active">Projects</a></li>
+      </ul>
+      <button class="nav__toggle" aria-label="Open menu" aria-expanded="false" id="navToggle">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </nav>
+
+  <div class="nav__mobile" id="mobileMenu" role="menu">
+    <a href="index.html"        class="nav__mobile-link">Home</a>
+    <a href="people.html"       class="nav__mobile-link">People</a>
+    <a href="publications.html" class="nav__mobile-link">Publications</a>
+    <a href="projects.html"     class="nav__mobile-link">Projects</a>
+  </div>
+
+  <!-- ===== PAGE HERO ===== -->
+  <header class="page-hero">
+    <div class="container">
+      <span class="section-label">What We Do</span>
+      <h1 class="page-hero__title">Research Projects</h1>
+      <p class="page-hero__subtitle">
+        Our lab combines large-scale computational analyses with experimental
+        validation to understand genome evolution across the tree of life.
+      </p>
+    </div>
+  </header>
+
+  <!-- ===== PROJECTS ===== -->
+  <section class="section">
+    <div class="container">
+
+      <div class="project-detail-grid">
+
+        <!-- Project 1 -->
+        <div class="project-detail-card" id="3d-genome">
+          <div class="project-detail-card__sidebar">
+            <div>
+              <div class="project-detail-card__icon-large">🧬</div>
+              <div class="project-detail-card__name">
+                Genome 3D Structure &amp; Whole Genome Duplication
+              </div>
+            </div>
+            <div style="margin-top:2rem;">
+              <div class="pub-item__tags">
+                <span class="tag" style="background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);">Hi-C</span>
+                <span class="tag" style="background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);">Chromatin</span>
+                <span class="tag" style="background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);">Polyploidy</span>
+              </div>
+            </div>
+          </div>
+          <div class="project-detail-card__body">
+            <p class="project-detail-card__desc">
+              Whole-genome duplication (WGD) is a major driver of evolutionary novelty,
+              yet how it rewires the three-dimensional organisation of the genome remains
+              poorly understood.
+            </p>
+            <p class="project-detail-card__desc">
+              We use Hi-C and other chromatin conformation capture techniques, combined
+              with gene expression and epigenomics data, to characterise how TADs,
+              compartments, and loop structures are established, maintained, or disrupted
+              following WGD events in salmonid fish and other lineages.
+            </p>
+            <p class="project-detail-card__desc">
+              Key questions include: How quickly is 3D genome organisation re-established
+              after duplication? Are sub-genome asymmetries encoded in 3D? Can 3D organisation
+              explain differences in gene expression divergence between homeologs?
+            </p>
+            <div class="project-detail-card__meta">
+              <a href="publications.html" class="btn btn--primary" style="font-size:.85rem;padding:.55rem 1.1rem;">Related Publications</a>
+              <a href="people.html"       class="btn btn--outline" style="font-size:.85rem;padding:.55rem 1.1rem;color:var(--teal);border-color:var(--teal);">Team Members</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Project 2 -->
+        <div class="project-detail-card" id="fungi">
+          <div class="project-detail-card__sidebar">
+            <div>
+              <div class="project-detail-card__icon-large">🍄</div>
+              <div class="project-detail-card__name">
+                Fungal Genome &amp; Trait Evolution
+              </div>
+            </div>
+            <div style="margin-top:2rem;">
+              <div class="pub-item__tags">
+                <span class="tag" style="background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);">Comparative genomics</span>
+                <span class="tag" style="background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);">Secondary metabolism</span>
+                <span class="tag" style="background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);">Phylogenomics</span>
+              </div>
+            </div>
+          </div>
+          <div class="project-detail-card__body">
+            <p class="project-detail-card__desc">
+              Fungi represent one of the most evolutionarily diverse kingdoms of life,
+              with genomes that vary dramatically in size, repeat content, and gene
+              complement. Our group uses comparative and population genomics to understand
+              the forces driving this diversity.
+            </p>
+            <p class="project-detail-card__desc">
+              We focus particularly on secondary metabolite gene clusters — genomic hotspots
+              for innovation — and on how horizontal gene transfer, transposable element
+              dynamics, and selective pressures shape the genomic landscape of key
+              ecological and agricultural fungal groups.
+            </p>
+            <div class="project-detail-card__meta">
+              <a href="publications.html" class="btn btn--primary" style="font-size:.85rem;padding:.55rem 1.1rem;">Related Publications</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Project 3 -->
+        <div class="project-detail-card" id="salmon">
+          <div class="project-detail-card__sidebar">
+            <div>
+              <div class="project-detail-card__icon-large">🐟</div>
+              <div class="project-detail-card__name">
+                Salmon Genetics, Physiology &amp; Welfare
+              </div>
+            </div>
+            <div style="margin-top:2rem;">
+              <div class="pub-item__tags">
+                <span class="tag" style="background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);">GWAS</span>
+                <span class="tag" style="background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);">Aquaculture</span>
+                <span class="tag" style="background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);">Imputation</span>
+              </div>
+            </div>
+          </div>
+          <div class="project-detail-card__body">
+            <p class="project-detail-card__desc">
+              Atlantic salmon is both an ecologically important species and the cornerstone
+              of Norway's aquaculture industry. Our lab uses population genomics, GWAS, and
+              genotype imputation to improve our understanding of the genomic basis of
+              complex traits relevant to production, health, and welfare.
+            </p>
+            <p class="project-detail-card__desc">
+              Projects include: identifying QTLs for disease resistance and thermal
+              tolerance; developing imputation methods tailored to the duplicated salmon
+              genome; and investigating how management practices affect genomic diversity
+              in farmed populations.
+            </p>
+            <p class="project-detail-card__desc">
+              The <strong>beagle_impute</strong> pipeline developed in this lab provides a
+              Snakemake workflow for population-scale genotype imputation using BEAGLE.
+            </p>
+            <div class="project-detail-card__meta">
+              <a href="publications.html" class="btn btn--primary" style="font-size:.85rem;padding:.55rem 1.1rem;">Related Publications</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Project 4 -->
+        <div class="project-detail-card" id="diversity">
+          <div class="project-detail-card__sidebar">
+            <div>
+              <div class="project-detail-card__icon-large">🌿</div>
+              <div class="project-detail-card__name">
+                Eukaryote Genome Diversity in Norway
+              </div>
+            </div>
+            <div style="margin-top:2rem;">
+              <div class="pub-item__tags">
+                <span class="tag" style="background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);">Genome assembly</span>
+                <span class="tag" style="background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);">Biodiversity</span>
+                <span class="tag" style="background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);">Long-read sequencing</span>
+              </div>
+            </div>
+          </div>
+          <div class="project-detail-card__body">
+            <p class="project-detail-card__desc">
+              Norway's diverse ecosystems harbour an extraordinary range of eukaryotic
+              organisms, many of which lack reference genome sequences. This project aims
+              to generate high-quality chromosome-level genome assemblies for a broad
+              sample of Norwegian eukaryotes — from plants and fungi to animals and protists.
+            </p>
+            <p class="project-detail-card__desc">
+              Using long-read sequencing technologies (PacBio HiFi, Oxford Nanopore) and
+              modern assembly tools, we are building a genomic reference library that will
+              support comparative genomic studies, population genetics, and conservation
+              biology across Norwegian biodiversity.
+            </p>
+            <div class="project-detail-card__meta">
+              <a href="publications.html" class="btn btn--primary" style="font-size:.85rem;padding:.55rem 1.1rem;">Related Publications</a>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== TOOLS & SOFTWARE ===== -->
+  <section class="section section--alt">
+    <div class="container">
+      <span class="section-label">Open Science</span>
+      <h2>Tools &amp; Software</h2>
+      <p class="text-muted mt-2" style="max-width:560px;">
+        We develop open-source bioinformatics tools and pipelines to support our
+        research and the wider community.
+      </p>
+
+      <div class="projects-grid" style="margin-top:2rem;">
+
+        <div class="project-card">
+          <div class="project-card__icon">⚙️</div>
+          <div class="project-card__title">beagle_impute</div>
+          <p class="project-card__desc">
+            A Snakemake pipeline for population-scale genotype imputation using
+            BEAGLE. Supports large cohorts and integrates quality-control steps.
+          </p>
+          <div style="margin-top:1rem;">
+            <a href="https://github.com/timknutsen/beagle_impute" class="person-card__link">GitHub</a>
+          </div>
+        </div>
+
+        <div class="project-card">
+          <div class="project-card__icon">📊</div>
+          <div class="project-card__title">Genome Assembly QC</div>
+          <p class="project-card__desc">
+            Tools and scripts for assessing genome assembly completeness,
+            contiguity, and correctness across a range of metrics.
+          </p>
+        </div>
+
+        <div class="project-card">
+          <div class="project-card__icon">🔬</div>
+          <div class="project-card__title">Hi-C Analysis Toolkit</div>
+          <p class="project-card__desc">
+            Workflows for processing Hi-C data, calling TADs and loops,
+            and comparing 3D genome organisation across conditions or species.
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer__inner">
+        <div>
+          <div class="footer__logo">Sandve Lab</div>
+          <p class="footer__tagline">
+            Understanding how genomes evolve and how genomic variation
+            drives adaptation and phenotypic change.
+          </p>
+        </div>
+        <div>
+          <div class="footer__heading">Navigation</div>
+          <nav class="footer__links">
+            <a href="index.html"        class="footer__link">Home</a>
+            <a href="people.html"       class="footer__link">People</a>
+            <a href="publications.html" class="footer__link">Publications</a>
+            <a href="projects.html"     class="footer__link">Projects</a>
+          </nav>
+        </div>
+        <div>
+          <div class="footer__heading">Contact</div>
+          <address class="footer__address">
+            Section for Genome Biology<br />
+            Faculty of Biosciences<br />
+            Norwegian University of Life Sciences<br />
+            Ås, Norway
+          </address>
+        </div>
+      </div>
+      <div class="footer__bottom">
+        <span>&copy; 2026 Sandve Lab, NMBU</span>
+        <span><a href="https://srsandve.org" class="footer__link">srsandve.org</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+</html>
