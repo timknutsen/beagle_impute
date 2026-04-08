@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sandve Lab — Genome Biology @ NMBU</title>
+  <meta name="description" content="The Sandve Lab studies how genomes evolve and how genomic variation impacts phenotypic variation, adaptation, and evolution of traits." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Lora:ital,wght@0,600;0,700;1,500;1,600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+  <!-- ===== NAV ===== -->
+  <nav class="nav" role="navigation" aria-label="Main">
+    <div class="nav__inner">
+      <a href="index.html" class="nav__logo">
+        <span class="nav__logo-name">Sandve Lab</span>
+        <span class="nav__logo-sub">Genome Biology · NMBU</span>
+      </a>
+      <ul class="nav__links" role="list">
+        <li><a href="index.html"        class="nav__link active">Home</a></li>
+        <li><a href="people.html"       class="nav__link">People</a></li>
+        <li><a href="publications.html" class="nav__link">Publications</a></li>
+        <li><a href="projects.html"     class="nav__link">Projects</a></li>
+      </ul>
+      <button class="nav__toggle" aria-label="Open menu" aria-expanded="false" id="navToggle">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Mobile menu -->
+  <div class="nav__mobile" id="mobileMenu" role="menu">
+    <a href="index.html"        class="nav__mobile-link">Home</a>
+    <a href="people.html"       class="nav__mobile-link">People</a>
+    <a href="publications.html" class="nav__mobile-link">Publications</a>
+    <a href="projects.html"     class="nav__mobile-link">Projects</a>
+  </div>
+
+  <!-- ===== HERO ===== -->
+  <header class="hero">
+    <div class="container">
+      <div class="hero__content">
+        <div class="hero__badge">
+          <span class="hero__badge-dot"></span>
+          Actively recruiting
+        </div>
+        <h1 class="hero__title">Sandve Lab</h1>
+        <div class="hero__institution">
+          <p>Section for Genome Biology</p>
+          <p>Faculty of Biosciences</p>
+          <p>Norwegian University of Life Sciences (NMBU)</p>
+        </div>
+        <p class="hero__tagline">
+          We are interested in understanding how genomes evolve, and how
+          genomic variation impacts phenotypic variation, adaptation,
+          and evolution of traits.
+        </p>
+        <div class="hero__cta">
+          <a href="projects.html" class="btn btn--primary">Our Research</a>
+          <a href="people.html"   class="btn btn--outline">Meet the Team</a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== CURRENT PROJECTS ===== -->
+  <section class="section" id="research">
+    <div class="container">
+      <span class="section-label">Research Focus</span>
+      <h2>Current Projects</h2>
+      <p class="text-muted mt-2" style="max-width:560px">
+        Our lab combines computational and experimental approaches to study genome
+        evolution across a diverse range of organisms.
+      </p>
+
+      <div class="projects-grid">
+
+        <div class="project-card">
+          <div class="project-card__icon">🧬</div>
+          <div class="project-card__title">Genome 3D Structure &amp; Whole Genome Duplication</div>
+          <p class="project-card__desc">
+            Investigating how the three-dimensional organisation of chromatin
+            changes after whole-genome duplication events and its functional
+            consequences.
+          </p>
+        </div>
+
+        <div class="project-card">
+          <div class="project-card__icon">🍄</div>
+          <div class="project-card__title">Fungal Genome &amp; Trait Evolution</div>
+          <p class="project-card__desc">
+            Exploring the evolutionary forces that shape fungal genomes and how
+            genome-level changes translate to trait diversity.
+          </p>
+        </div>
+
+        <div class="project-card">
+          <div class="project-card__icon">🐟</div>
+          <div class="project-card__title">Salmon Genetics, Physiology &amp; Welfare</div>
+          <p class="project-card__desc">
+            Using genomics to improve understanding of Atlantic salmon biology,
+            health, and welfare in aquaculture settings.
+          </p>
+        </div>
+
+        <div class="project-card">
+          <div class="project-card__icon">🌿</div>
+          <div class="project-card__title">Eukaryote Genome Diversity in Norway</div>
+          <p class="project-card__desc">
+            Sequencing the remarkable diversity of eukaryote genomes present in
+            Norwegian ecosystems to build a reference resource.
+          </p>
+        </div>
+
+      </div>
+
+      <div class="mt-4">
+        <a href="projects.html" class="btn btn--primary">View All Projects</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== LAB UPDATES ===== -->
+  <section class="section section--alt" id="updates">
+    <div class="container">
+      <div class="updates-header">
+        <div>
+          <span class="section-label">News</span>
+          <h2>Lab Updates</h2>
+        </div>
+        <a href="#updates" class="btn btn--primary" style="font-size:.85rem;padding:.6rem 1.25rem">All Updates</a>
+      </div>
+
+      <!-- 2026 -->
+      <div class="year-group">
+        <div class="year-label">2026</div>
+
+        <div class="month-group">
+          <div class="month-label">March</div>
+          <div class="update-item">
+            <div class="update-item__dot"></div>
+            <p class="update-item__text">
+              Final version of our <a href="#"><strong>cloudberry genome</strong></a>
+              paper is out — high-quality chromosome-level assembly with full annotation.
+            </p>
+          </div>
+          <div class="update-item">
+            <div class="update-item__dot"></div>
+            <p class="update-item__text">
+              New preprint on 3D genome reorganisation following whole-genome duplication
+              in salmonids is available on bioRxiv.
+            </p>
+          </div>
+        </div>
+
+        <div class="month-group">
+          <div class="month-label">January</div>
+          <div class="update-item">
+            <div class="update-item__dot"></div>
+            <p class="update-item__text">
+              Welcome to our new Postdoctoral Researcher joining the salmon genomics team!
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2025 -->
+      <div class="year-group">
+        <div class="year-label">2025</div>
+
+        <div class="month-group">
+          <div class="month-label">November</div>
+          <div class="update-item">
+            <div class="update-item__dot"></div>
+            <p class="update-item__text">
+              Paper on <strong>eukaryote genome diversity</strong> sampling strategy
+              published in <em>Genome Biology</em>.
+            </p>
+          </div>
+        </div>
+
+        <div class="month-group">
+          <div class="month-label">August</div>
+          <div class="update-item">
+            <div class="update-item__dot"></div>
+            <p class="update-item__text">
+              Two new PhD students join the lab — welcome aboard!
+            </p>
+          </div>
+        </div>
+
+        <div class="month-group">
+          <div class="month-label">May</div>
+          <div class="update-item">
+            <div class="update-item__dot"></div>
+            <p class="update-item__text">
+              Presented at <strong>SMBE 2025</strong> — talks on fungal genome evolution
+              and Hi-C chromatin structure.
+            </p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer__inner">
+        <div>
+          <div class="footer__logo">Sandve Lab</div>
+          <p class="footer__tagline">
+            Understanding how genomes evolve and how genomic variation
+            drives adaptation and phenotypic change.
+          </p>
+        </div>
+
+        <div>
+          <div class="footer__heading">Navigation</div>
+          <nav class="footer__links">
+            <a href="index.html"        class="footer__link">Home</a>
+            <a href="people.html"       class="footer__link">People</a>
+            <a href="publications.html" class="footer__link">Publications</a>
+            <a href="projects.html"     class="footer__link">Projects</a>
+          </nav>
+        </div>
+
+        <div>
+          <div class="footer__heading">Contact</div>
+          <address class="footer__address">
+            Section for Genome Biology<br />
+            Faculty of Biosciences<br />
+            Norwegian University of Life Sciences<br />
+            Ås, Norway
+          </address>
+        </div>
+      </div>
+
+      <div class="footer__bottom">
+        <span>&copy; 2026 Sandve Lab, NMBU</span>
+        <span><a href="https://srsandve.org" class="footer__link">srsandve.org</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>People — Sandve Lab</title>
+  <meta name="description" content="Meet the researchers of the Sandve Lab at NMBU." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Lora:ital,wght@0,600;0,700;1,500;1,600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+  <!-- ===== NAV ===== -->
+  <nav class="nav" role="navigation" aria-label="Main">
+    <div class="nav__inner">
+      <a href="index.html" class="nav__logo">
+        <span class="nav__logo-name">Sandve Lab</span>
+        <span class="nav__logo-sub">Genome Biology · NMBU</span>
+      </a>
+      <ul class="nav__links" role="list">
+        <li><a href="index.html"        class="nav__link">Home</a></li>
+        <li><a href="people.html"       class="nav__link active">People</a></li>
+        <li><a href="publications.html" class="nav__link">Publications</a></li>
+        <li><a href="projects.html"     class="nav__link">Projects</a></li>
+      </ul>
+      <button class="nav__toggle" aria-label="Open menu" aria-expanded="false" id="navToggle">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </nav>
+
+  <div class="nav__mobile" id="mobileMenu" role="menu">
+    <a href="index.html"        class="nav__mobile-link">Home</a>
+    <a href="people.html"       class="nav__mobile-link">People</a>
+    <a href="publications.html" class="nav__mobile-link">Publications</a>
+    <a href="projects.html"     class="nav__mobile-link">Projects</a>
+  </div>
+
+  <!-- ===== PAGE HERO ===== -->
+  <header class="page-hero">
+    <div class="container">
+      <span class="section-label">The Team</span>
+      <h1 class="page-hero__title">People</h1>
+      <p class="page-hero__subtitle">
+        A diverse group of researchers working at the interface of genomics,
+        bioinformatics, and evolutionary biology.
+      </p>
+    </div>
+  </header>
+
+  <!-- ===== PI ===== -->
+  <section class="section" id="pi">
+    <div class="container">
+      <span class="section-label">Principal Investigator</span>
+
+      <div style="display:grid;grid-template-columns:200px 1fr;gap:2.5rem;align-items:start;margin-top:2rem;max-width:780px;"
+           class="pi-grid">
+        <div class="person-card__avatar" style="border-radius:var(--radius-md);aspect-ratio:1;width:100%;">
+          <span style="font-size:4rem;">👤</span>
+        </div>
+        <div>
+          <h2 style="margin-bottom:.25rem;">Geir Kjetil Sandve</h2>
+          <div class="section-label" style="margin-bottom:.75rem;">Professor &amp; Group Leader</div>
+          <p>
+            Geir Kjetil Sandve is a professor at the Section for Genome Biology,
+            Faculty of Biosciences, Norwegian University of Life Sciences (NMBU).
+            His research centres on computational genomics and the evolutionary
+            and functional analysis of genomes.
+          </p>
+          <p>
+            He has made significant contributions to our understanding of
+            transcription factor binding sites, regulatory evolution, and
+            genome-scale patterns of variation.
+          </p>
+          <div class="person-card__links" style="margin-top:1rem;">
+            <a href="https://srsandve.org" class="person-card__link">Website</a>
+            <a href="#" class="person-card__link">Google Scholar</a>
+            <a href="#" class="person-card__link">ORCID</a>
+            <a href="#" class="person-card__link">Twitter / X</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== CURRENT MEMBERS ===== -->
+  <section class="section section--alt" id="members">
+    <div class="container">
+      <span class="section-label">Current Members</span>
+      <h2>Researchers</h2>
+
+      <div class="people-grid" style="margin-top:2rem;">
+
+        <!-- Postdocs -->
+        <div class="person-card">
+          <div class="person-card__avatar"><span>👤</span></div>
+          <div class="person-card__body">
+            <div class="person-card__name">Postdoctoral Researcher</div>
+            <div class="person-card__role">Postdoc · Salmon Genomics</div>
+            <p class="person-card__bio">
+              Research focus on Atlantic salmon genetics and genomic factors
+              influencing welfare in aquaculture.
+            </p>
+          </div>
+        </div>
+
+        <!-- PhD 1 -->
+        <div class="person-card">
+          <div class="person-card__avatar"><span>👤</span></div>
+          <div class="person-card__body">
+            <div class="person-card__name">PhD Candidate</div>
+            <div class="person-card__role">PhD · 3D Genome</div>
+            <p class="person-card__bio">
+              Investigating chromatin architecture changes after whole-genome
+              duplication events using Hi-C and epigenomics.
+            </p>
+          </div>
+        </div>
+
+        <!-- PhD 2 -->
+        <div class="person-card">
+          <div class="person-card__avatar"><span>👤</span></div>
+          <div class="person-card__body">
+            <div class="person-card__name">PhD Candidate</div>
+            <div class="person-card__role">PhD · Fungal Evolution</div>
+            <p class="person-card__bio">
+              Studying genome and trait evolution across diverse fungal lineages
+              using comparative genomics approaches.
+            </p>
+          </div>
+        </div>
+
+        <!-- PhD 3 -->
+        <div class="person-card">
+          <div class="person-card__avatar"><span>👤</span></div>
+          <div class="person-card__body">
+            <div class="person-card__name">PhD Candidate</div>
+            <div class="person-card__role">PhD · Eukaryote Diversity</div>
+            <p class="person-card__bio">
+              Sequencing and characterising the diversity of eukaryote genomes
+              in Norwegian ecosystems.
+            </p>
+          </div>
+        </div>
+
+        <!-- Master 1 -->
+        <div class="person-card">
+          <div class="person-card__avatar"><span>👤</span></div>
+          <div class="person-card__body">
+            <div class="person-card__name">Master's Student</div>
+            <div class="person-card__role">MSc · Bioinformatics</div>
+            <p class="person-card__bio">
+              Developing computational tools for genome assembly quality
+              assessment and repeat annotation.
+            </p>
+          </div>
+        </div>
+
+        <!-- Master 2 -->
+        <div class="person-card">
+          <div class="person-card__avatar"><span>👤</span></div>
+          <div class="person-card__body">
+            <div class="person-card__name">Master's Student</div>
+            <div class="person-card__role">MSc · Salmon Genomics</div>
+            <p class="person-card__bio">
+              Analysing genomic variation associated with stress response
+              and disease resistance in salmon.
+            </p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== ALUMNI ===== -->
+  <section class="section" id="alumni">
+    <div class="container">
+      <span class="section-label">Former Members</span>
+      <h2>Alumni</h2>
+      <p class="text-muted mt-2">Past members of the lab and where they are now.</p>
+
+      <div class="alumni-list" style="margin-top:2rem;">
+
+        <div class="alumni-item">
+          <div class="alumni-item__initial">A</div>
+          <div>
+            <div class="alumni-item__name">Alumni Member</div>
+            <div class="alumni-item__info">PhD 2024 · Now at University of Oslo</div>
+          </div>
+        </div>
+
+        <div class="alumni-item">
+          <div class="alumni-item__initial">B</div>
+          <div>
+            <div class="alumni-item__name">Alumni Member</div>
+            <div class="alumni-item__info">PhD 2023 · Now at EMBL</div>
+          </div>
+        </div>
+
+        <div class="alumni-item">
+          <div class="alumni-item__initial">C</div>
+          <div>
+            <div class="alumni-item__name">Alumni Member</div>
+            <div class="alumni-item__info">Postdoc 2022 · Now at NTNU</div>
+          </div>
+        </div>
+
+        <div class="alumni-item">
+          <div class="alumni-item__initial">D</div>
+          <div>
+            <div class="alumni-item__name">Alumni Member</div>
+            <div class="alumni-item__info">PhD 2022 · Now in Industry</div>
+          </div>
+        </div>
+
+        <div class="alumni-item">
+          <div class="alumni-item__initial">E</div>
+          <div>
+            <div class="alumni-item__name">Alumni Member</div>
+            <div class="alumni-item__info">MSc 2024 · Now PhD at Uppsala</div>
+          </div>
+        </div>
+
+        <div class="alumni-item">
+          <div class="alumni-item__initial">F</div>
+          <div>
+            <div class="alumni-item__name">Alumni Member</div>
+            <div class="alumni-item__info">MSc 2023 · Now PhD at NMBU</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer__inner">
+        <div>
+          <div class="footer__logo">Sandve Lab</div>
+          <p class="footer__tagline">
+            Understanding how genomes evolve and how genomic variation
+            drives adaptation and phenotypic change.
+          </p>
+        </div>
+        <div>
+          <div class="footer__heading">Navigation</div>
+          <nav class="footer__links">
+            <a href="index.html"        class="footer__link">Home</a>
+            <a href="people.html"       class="footer__link">People</a>
+            <a href="publications.html" class="footer__link">Publications</a>
+            <a href="projects.html"     class="footer__link">Projects</a>
+          </nav>
+        </div>
+        <div>
+          <div class="footer__heading">Contact</div>
+          <address class="footer__address">
+            Section for Genome Biology<br />
+            Faculty of Biosciences<br />
+            Norwegian University of Life Sciences<br />
+            Ås, Norway
+          </address>
+        </div>
+      </div>
+      <div class="footer__bottom">
+        <span>&copy; 2026 Sandve Lab, NMBU</span>
+        <span><a href="https://srsandve.org" class="footer__link">srsandve.org</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+
+  <style>
+    @media (max-width: 560px) {
+      .pi-grid { grid-template-columns: 1fr !important; }
+    }
+  </style>
+</body>
+</html>
