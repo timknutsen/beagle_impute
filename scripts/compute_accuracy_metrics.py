@@ -222,37 +222,47 @@ def main():
     print(f"Evaluated variants : {len(eval_variants)}", flush=True)
 
     # Write temp subsetting files
-    tmp = tempfile.mkdtemp()
-    samples_file = os.path.join(tmp, "samples.txt")
-    regions_file = os.path.join(tmp, "regions.txt")
+    with tempfile.TemporaryDirectory() as tmp:
+        samples_file = os.path.join(tmp, "samples.txt")
+        regions_file = os.path.join(tmp, "regions.txt")
 
-    with open(samples_file, "w") as fh:
-        fh.write("\n".join(common_samples) + "\n")
+        with open(samples_file, "w") as fh:
+            fh.write("\n".join(common_samples) + "\n")
 
-    with open(regions_file, "w") as fh:
-        for v in eval_variants:
-            chrom, pos, *_ = v.split(":", 3)
-            fh.write(f"{chrom}\t{pos}\n")
+        with open(regions_file, "w") as fh:
+            for v in eval_variants:
+                chrom, pos, *_ = v.split(":", 3)
+                fh.write(f"{chrom}\t{pos}\n")
 
-    # ── Load genotype matrices ────────────────────────────────────────────────
-    print("Loading imputed data ...", flush=True)
-    imp_matrix = load_imputed_matrix(args.imputed, samples_file, regions_file)
+        # ── Load genotype matrices ────────────────────────────────────────────
+        print("Loading imputed data ...", flush=True)
+        imp_matrix = load_imputed_matrix(args.imputed, samples_file, regions_file)
 
-    print("Loading truth data ...", flush=True)
-    tru_matrix = load_truth_matrix(args.truth, samples_file, regions_file)
+        print("Loading truth data ...", flush=True)
+        tru_matrix = load_truth_matrix(args.truth, samples_file, regions_file)
 
-    if imp_matrix.shape != tru_matrix.shape:
+    expected_shape = (len(eval_variants), len(common_samples))
+    if imp_matrix.size == 0 or tru_matrix.size == 0:
         sys.exit(
-            f"ERROR: matrix shape mismatch — "
-            f"imputed {imp_matrix.shape} vs truth {tru_matrix.shape}.\n"
-            "Check that both VCFs were produced from the same set of animals."
+            "ERROR: bcftools returned empty output for one or both VCFs.\n"
+            "Check that sample IDs and regions match."
+        )
+    if imp_matrix.shape != expected_shape:
+        sys.exit(
+            f"ERROR: imputed matrix shape {imp_matrix.shape} != "
+            f"expected {expected_shape}. bcftools region/sample filter may have failed."
+        )
+    if tru_matrix.shape != expected_shape:
+        sys.exit(
+            f"ERROR: truth matrix shape {tru_matrix.shape} != "
+            f"expected {expected_shape}. bcftools region/sample filter may have failed."
         )
 
     # ── Per-SNP metrics ───────────────────────────────────────────────────────
     missing_mask = np.isnan(imp_matrix) | np.isnan(tru_matrix)
     match        = np.where(
         missing_mask, np.nan,
-        (np.round(imp_matrix) == tru_matrix).astype(np.float32),
+        (np.floor(imp_matrix + 0.5) == tru_matrix).astype(np.float32),
     )
     concordance = np.nanmean(match, axis=1)
     r2          = pearsonr_rowwise(imp_matrix, tru_matrix) ** 2
@@ -278,7 +288,7 @@ def main():
     indiv_miss    = np.isnan(imp_matrix) | np.isnan(tru_matrix)
     indiv_match   = np.where(
         indiv_miss, np.nan,
-        (np.round(imp_matrix) == tru_matrix).astype(np.float32),
+        (np.floor(imp_matrix + 0.5) == tru_matrix).astype(np.float32),
     )
     indiv_concord = np.nanmean(indiv_match, axis=0)
 
@@ -293,7 +303,7 @@ def main():
 
     # ── Per-MAF-bin metrics ───────────────────────────────────────────────────
     bins   = sorted(set([0.0] + list(args.maf_bins) + [0.5]))
-    labels = [f"{bins[i]:.2f}-{bins[i+1]:.2f}" for i in range(len(bins) - 1)]
+    labels = [f"{bins[i]:.4f}-{bins[i+1]:.4f}" for i in range(len(bins) - 1)]
     snp_df["maf_bin"] = pd.cut(
         snp_df["maf"], bins=bins, labels=labels, include_lowest=True
     )
