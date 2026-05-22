@@ -37,7 +37,7 @@ _use_alphaimpute2 = config.get("imputer", "beagle") == "alphaimpute2"
 # download rules are never triggered.
 # ---------------------------------------------------------------------------
 
-_BEAGLE_URL    = "https://faculty.washington.edu/browning/beagle/beagle.17Dec24.jar"
+_BEAGLE_URL    = "https://faculty.washington.edu/browning/beagle/beagle.27Feb25.75f.jar"
 _CONFORM_URL   = "https://faculty.washington.edu/browning/conform-gt/conform-gt.24May16.cee.jar"
 
 _beagle_jar  = config.get("beagle_jar",    "bin/beagle.jar")
