@@ -114,11 +114,14 @@ The test suite lives in `tests/` and uses [pytest](https://docs.pytest.org). No 
 ### Running the tests
 
 ```bash
-# Activate the workflow conda env (has pytest) and run from the repo root:
+# Option 1: create the workflow_env once (matches envs/workflow_env.yaml) and use it.
+# Note: Snakemake's --use-conda builds this env under .snakemake/conda/ on demand,
+# so you only need to create the top-level env if you want to `conda activate` it.
+conda env create -f envs/workflow_env.yaml
 conda activate workflow_env
 pytest
 
-# Or install pytest standalone:
+# Option 2: install pytest into any existing env that already has bcftools/htslib/plink2.
 pip install pytest && pytest
 ```
 

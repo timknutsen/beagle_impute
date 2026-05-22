@@ -26,16 +26,19 @@ snakemake --use-conda --cores 8 \
 
 ## Tests
 
+`workflow_env` is **not** a pre-existing top-level conda env on most machines — it's
+defined by `envs/workflow_env.yaml` and Snakemake builds it on-demand under
+`.snakemake/conda/<hash>_` when running with `--use-conda`. To run pytest, either
+create it once explicitly or use any env that already has pytest + bcftools + htslib + plink2 (e.g. an aquagen `base_env`).
+
 ```bash
-# Run all tests (from repo root, with workflow_env active)
-conda activate workflow_env
-pytest
+# One-time setup (only if you want `conda activate workflow_env` to work)
+conda env create -f envs/workflow_env.yaml
 
-# Skip tests requiring external tools (bgzip, tabix, plink2, snakemake)
-pytest -m "not slow"
-
-# Run a single test file
-pytest tests/test_convert.py -v
+# Run tests
+pytest                           # all tests
+pytest -m "not slow"             # skip tests needing bgzip/tabix/plink2/snakemake
+pytest tests/test_convert.py -v  # single file
 ```
 
 Test fixtures are generated synthetically at runtime in a temp dir — no binary files in git. Tests that require missing binaries auto-skip.
@@ -96,3 +99,24 @@ normalize_vcf → bcftools_isec → conform_gt → run_beagle → merge_imputed_
 ### SLURM resource groups
 
 Rules in the same group (`intersect`, `conform`, `beagle`) are submitted together. The `--group-components` flag controls how many chromosomes per job. `run_beagle` uses 70 GB RAM; `conform_gt` and `bcftools_isec` use 32 GB.
+
+## Conventions when editing rules
+
+- **All rule outputs must live under `${output_dir}`.** Hard-coded paths
+  (e.g. `"plink_binary/imputed_data.bed"`) cause parallel runs that share a
+  cwd to clobber each other. Use `config["output_dir"] + "/..."` for every
+  `output:` field.
+- New per-chromosome rules should use `temp(...)` for intermediate VCFs so
+  Snakemake cleans them up after `concat_chromosomes`.
+- Heavy rules need an explicit `resources: mem_mb=...` so the SLURM executor
+  asks for the right partition (`run_beagle`=70000, `concat_chromosomes`=64000,
+  `bcftools_isec`/`conform_gt`=32000).
+
+## Working with the GitHub remote
+
+`gh` CLI is authenticated via HTTPS token. If `git fetch`/`push` fails with
+`Permission denied (publickey)`, the origin is on SSH — switch it:
+
+```bash
+git remote set-url origin https://github.com/timknutsen/beagle_impute.git
+```
