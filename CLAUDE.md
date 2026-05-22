@@ -96,9 +96,26 @@ normalize_vcf → bcftools_isec → conform_gt → run_beagle → merge_imputed_
 - `envs/alphaimpute2_env.yaml` — AlphaImpute2 env (Python 3.10 required; 3.12/3.14 incompatible)
 - `envs/accuracy_env.yaml` — accuracy evaluation env
 
-### SLURM resource groups
+### SLURM resource groups and partitions
 
-Rules in the same group (`intersect`, `conform`, `beagle`) are submitted together. The `--group-components` flag controls how many chromosomes per job. `run_beagle` uses 70 GB RAM; `conform_gt` and `bcftools_isec` use 32 GB.
+Rules in the same group (`intersect`, `conform`, `beagle`) are submitted together. The `--group-components` flag controls how many chromosomes per job.
+
+This cluster's partitions are split by node size, so every heavy rule must
+declare `slurm_partition` in `resources:` — without it Snakemake submits to
+the default `r6i-ondemand-large` (15 GiB / 2 CPU) and sbatch rejects the job
+("CPU count per node can not be satisfied").
+
+| Rule | `mem_mb` | `slurm_partition` |
+|------|---------:|-------------------|
+| `run_beagle` | 70000 | `r6i-ondemand-4xlarge` (124 GiB / 16 CPU) |
+| `concat_chromosomes` | 64000 | `r6i-ondemand-4xlarge` |
+| `bcftools_isec` / `conform_gt` | 32000 | `r6i-ondemand-2xlarge` (62 GiB / 8 CPU) |
+| `merge_imputed_with_target_only` / `convert_ref_to_bref3` | 16000 | `r6i-ondemand-2xlarge` |
+| `make_per_chrom_vcf` / `normalize_vcf` / `vcf_to_plink` | (none) | default `r6i-ondemand-large` |
+
+When adding a new rule that needs >15 GiB RAM, pick the smallest partition
+whose `RealMemory` (see `sinfo -o "%P %m %c"`) is ≥ the rule's `mem_mb`, and
+add `slurm_partition = "<name>"` to its `resources:`.
 
 ## Conventions when editing rules
 

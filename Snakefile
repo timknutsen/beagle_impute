@@ -202,7 +202,8 @@ rule run_beagle:
     log:
         "logs/beagle_chr{chrom}.log"
     resources:
-        mem_mb = 70000
+        mem_mb = 70000,
+        slurm_partition = "r6i-ondemand-4xlarge"
     group:
         "beagle"
     shell:
@@ -246,7 +247,8 @@ if _use_ref:
         log:
             "logs/merge_imputed_chr{chrom}.log"
         resources:
-            mem_mb = 16000
+            mem_mb = 16000,
+            slurm_partition = "r6i-ondemand-2xlarge"
         shell:
             """
             (bcftools concat \
@@ -287,7 +289,8 @@ rule concat_chromosomes:
         "envs/workflow_env.yaml"
     threads: 4
     resources:
-        mem_mb = 64000
+        mem_mb = 64000,
+        slurm_partition = "r6i-ondemand-4xlarge"
     log:
         "logs/concat_chromosomes.log"
     shell:

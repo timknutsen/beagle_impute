@@ -17,7 +17,8 @@ rule bcftools_isec:
     log:
         "logs/bcftools_isec_chr{chrom}.log"
     resources:
-        mem_mb = 32000
+        mem_mb = 32000,
+        slurm_partition = "r6i-ondemand-2xlarge"
     shell:
         """
         (bcftools isec \
@@ -45,7 +46,8 @@ rule conform_gt:
         "logs/conform_gt_chr{chrom}.log"
     resources:
         mem_mb  = 32000,
-        runtime = 60
+        runtime = 60,
+        slurm_partition = "r6i-ondemand-2xlarge"
     shell:
         """
         java -Xmx{resources.mem_mb}m -jar {params.conform_jar} \
@@ -78,7 +80,8 @@ rule convert_ref_to_bref3:
     log:
         "logs/bref3_chr{chrom}.log"
     resources:
-        mem_mb = 16000
+        mem_mb = 16000,
+        slurm_partition = "r6i-ondemand-2xlarge"
     shell:
         """
         (bcftools view -r {wildcards.chrom} -O z {input.reference} \
