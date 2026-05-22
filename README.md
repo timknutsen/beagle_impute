@@ -106,7 +106,69 @@ snakemake --use-conda \
 - Intermediate AlphaImpute2 files: `vcf_output/alphaimpute2_input/` and `vcf_output/alphaimpute2_output/`
 - Logs: `logs/`
 
-## 6. Testing
+## 6. Accuracy Evaluation
+
+Run the accuracy workflow separately from the main imputation workflow:
+
+```bash
+snakemake --snakefile Snakefile_accuracy --use-conda --cores 8
+```
+
+`config_accuracy.yaml` supports three modes:
+
+| Mode | Purpose |
+|------|---------|
+| `mask_and_impute` | Hold out one validation set, mask it to LD density, impute, and compare to truth |
+| `cross_array` | Compare a real low-density array against a real high-density array for the same animals |
+| `kfold_mask_and_impute` | Run K-fold animal CV from a shared LD marker panel to full density |
+
+For the 10k-to-full benchmark requested for real data, use:
+
+```yaml
+accuracy_mode: "kfold_mask_and_impute"
+accuracy_output_dir: "accuracy_cv"
+
+cv:
+  n_folds: 10
+  target_n_snps: 10000
+  target_snp_list: ""
+  random_seed: 42
+  imputers: ["beagle", "alphaimpute2", "fimpute"]
+
+fimpute_params:
+  executable: "/mnt/efshome/applications/FImpute3/2026/FImpute3"
+  nthreads: 1
+```
+
+In this mode each fold masks the held-out animals to the same 10k SNP panel.
+The other nine folds remain full density as the reference set.  Beagle uses
+the held-out LD animals as `gt=` and the non-held-out full-density animals as
+`ref=`; AlphaImpute2 and FImpute use a combined dataset where only the held-out
+animals are masked outside the LD panel.
+
+Command-line overrides use flat names because Snakemake does not accept dotted
+keys in `--config`:
+
+```bash
+snakemake --snakefile Snakefile_accuracy --use-conda --cores 8 \
+  --config accuracy_mode=kfold_mask_and_impute \
+           accuracy_output_dir=accuracy_cv \
+           bfile=/path/to/full_density_plink \
+           cv_n_folds=10 \
+           cv_target_n_snps=10000 \
+           cv_imputers="beagle alphaimpute2 fimpute"
+```
+
+CV outputs:
+
+- `accuracy_cv/cv_summary.tsv`: long table with one row per imputer/fold/metric
+- `accuracy_cv/cv_imputer_summary.tsv`: mean, SD, and count by imputer/metric
+- `accuracy_cv/{imputer}/fold{n}/summary.tsv`: per-fold summary
+- `accuracy_cv/{imputer}/fold{n}/metrics_by_snp.tsv`
+- `accuracy_cv/{imputer}/fold{n}/metrics_by_maf_bin.tsv`
+- `accuracy_cv/{imputer}/fold{n}/metrics_by_individual.tsv`
+
+## 7. Testing
 
 The test suite lives in `tests/` and uses [pytest](https://docs.pytest.org). No pipeline tools (plink2, Beagle, AlphaImpute2) are required for the default test run.
 
@@ -131,6 +193,7 @@ pip install pytest && pytest
 | `test_convert.py` (pure-Python group) | `GT_MAP` encoding, `read_bim`, `read_ai2_genotypes`, pedigree column format, genotype roundtrip against fixture matrix | None |
 | `test_convert.py` (`TestConvertRoundtrip`) | Full `convert()` call: bgzipped VCF content, REF/ALT allele direction, GT strings, tabix index creation, mismatch error | `bgzip`, `tabix` (htslib) |
 | `test_dryrun.py` | Snakemake DAG validation for Beagle (no ref), Beagle (with ref), and AlphaImpute2 modes — confirms rules resolve without executing anything | `snakemake` |
+| `test_accuracy_cv.py` | Ten-fold CV setup, FImpute I/O helpers, CV aggregation, and CV Snakemake dry-run | `snakemake` for dry-run only |
 
 Tests that require missing tools are **automatically skipped** with a clear reason — they never fail due to a missing binary.
 
@@ -144,7 +207,7 @@ The test fixtures in `tests/conftest.py` generate a small synthetic PLINK binary
 
 This pedigree structure allows meaningful tests of both the genotype encoding logic and the pedigree file format required by AlphaImpute2.
 
-## 7. Notes
+## 8. Notes
 
 ### AlphaImpute2 key parameters
 
@@ -194,12 +257,15 @@ Setting `bref3_jar` causes the pipeline to convert the reference VCF to bref3 bi
 ### 2. Accuracy Evaluation
 - Run with `snakemake --snakefile Snakefile_accuracy`
 - Configure in `config_accuracy.yaml`
-- Two modes: `mask_and_impute` (cross-validation) and `cross_array` (array transition)
+- Modes: `mask_and_impute`, `cross_array`, and `kfold_mask_and_impute`
 - Produces detailed accuracy metrics and summaries
 
 ## Scripts
 - `scripts/alphaimpute2_to_vcf.py`: Converts AlphaImpute2 output to VCF
 - `scripts/compute_accuracy_metrics.py`: Computes R², concordance, and summary stats
+- `scripts/make_accuracy_cv_setup.py`: Creates deterministic CV folds and LD SNP panels
+- `scripts/fimpute_io.py`: Converts PLINK raw exports to FImpute input files and FImpute output to VCF
+- `scripts/aggregate_cv_metrics.py`: Aggregates per-fold CV summary metrics
 
 ## Environments
 - `envs/workflow_env.yaml`: Main pipeline dependencies

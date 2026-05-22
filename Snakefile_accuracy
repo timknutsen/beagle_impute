@@ -6,13 +6,18 @@
 # Usage:
 #   snakemake --snakefile Snakefile_accuracy --use-conda --cores 8
 #
-# Two modes (set accuracy_mode in config_accuracy.yaml):
+# Three modes (set accuracy_mode in config_accuracy.yaml):
 #
 #   mask_and_impute  Mask a fraction of your animals to a lower SNP density,
 #                    impute them, compare to their true high-density genotypes.
 #
 #   cross_array      Same animals genotyped on two arrays. Impute from the
 #                    low-density array and compare to the high-density truth.
+#
+#   kfold_mask_and_impute
+#                    Ten-fold style animal CV.  Held-out animals are masked to
+#                    a shared LD panel, the remaining folds stay full density,
+#                    and Beagle/AlphaImpute2/FImpute can be compared.
 #
 # Tool configuration (beagle_jar, plink_path, etc.) is inherited from the
 # main config.yaml; accuracy-specific settings come from config_accuracy.yaml.
@@ -50,7 +55,16 @@ include: "rules/accuracy.smk"
 
 rule accuracy_all:
     input:
-        _acc_out + "/summary.tsv",
-        _acc_out + "/metrics_by_maf_bin.tsv",
-        _acc_out + "/metrics_by_snp.tsv",
-        _acc_out + "/metrics_by_individual.tsv",
+        (
+            [
+                _acc_out + "/cv_summary.tsv",
+                _acc_out + "/cv_imputer_summary.tsv",
+            ]
+            if _acc_mode == "kfold_mask_and_impute"
+            else [
+                _acc_out + "/summary.tsv",
+                _acc_out + "/metrics_by_maf_bin.tsv",
+                _acc_out + "/metrics_by_snp.tsv",
+                _acc_out + "/metrics_by_individual.tsv",
+            ]
+        ),
