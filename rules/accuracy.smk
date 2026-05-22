@@ -386,9 +386,13 @@ if not _use_alphaimpute2:
             # For mask_and_impute without an external reference, Beagle uses
             # population LD within the study sample alone.
             ref_param = (
-                f"ref={config['reference_vcf']}"
-                if config.get("reference_vcf", "").strip()
-                else ""
+                ""
+                if _acc_mode == "mask_and_impute"
+                else (
+                    f"ref={config['reference_vcf']}"
+                    if config.get("reference_vcf", "").strip()
+                    else ""
+                )
             ),
         threads:
             config["beagle_params"]["nthreads"]
@@ -423,6 +427,8 @@ if not _use_alphaimpute2:
         conda:
             "../envs/workflow_env.yaml"
         threads: 4
+        resources:
+            mem_mb = 64000,
         log:
             "logs/accuracy/concat_imputed.log",
         shell:
@@ -500,6 +506,7 @@ else:
             extra_flags = " ".join(
                 (["-ped_only"] if config["alphaimpute2_params"].get("ped_only", False) else [])
                 + (["-pop_only"] if config["alphaimpute2_params"].get("pop_only", False) else [])
+                + (["-phase_output"] if config["alphaimpute2_params"].get("phase_output", False) else [])
             ),
         threads:
             config["alphaimpute2_params"].get("maxthreads", 1)
@@ -575,7 +582,6 @@ rule acc_truth_to_vcf:
             {params.extra} \
             --out    {params.out} \
             --snps-only) &> {log}
-        mv {params.out}.vcf.gz {output.vcf}
         tabix -f -p vcf {output.vcf}
         """
 
@@ -612,7 +618,7 @@ rule acc_compute_metrics:
         "logs/accuracy/compute_metrics.log",
     shell:
         """
-        python scripts/compute_accuracy_metrics.py \
+        python {workflow.basedir}/scripts/compute_accuracy_metrics.py \
             --imputed  {input.imputed} \
             --truth    {input.truth} \
             --out-dir  {params.out_dir} \
