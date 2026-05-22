@@ -1,4 +1,3 @@
-
 # Chromosome-wise Imputation Pipeline
 
 This pipeline converts PLINK files to VCF per chromosome, optionally harmonizes against a reference VCF, and imputes with Beagle 5.5.
@@ -146,3 +145,36 @@ Setting `bref3_jar` causes the pipeline to convert the reference VCF to bref3 bi
 - **`ne`** has a large effect on imputation accuracy for non-human populations. Use a value appropriate for your species — the Beagle default of 1,000,000 is designed for large outbred human populations and performs poorly for livestock and aquaculture species.
 - **`nthreads`** should match the number of CPUs you allocate. Beagle scales well with more threads — the default of 4 is a reasonable starting point; increase for cluster jobs.
 - **`plink_extra_flags`**: Set species-specific PLINK flags here, e.g. `"--dog --aec"` for canine data. Empty by default.
+
+## Project Structure
+
+- **Snakefile**: Main imputation workflow (Beagle/AlphaImpute2)
+- **Snakefile_accuracy**: Imputation accuracy evaluation workflow
+- **config.yaml**: Main pipeline configuration
+- **config_accuracy.yaml**: Accuracy evaluation configuration
+- **rules/**: Modular Snakemake rule files (per-imputer, reference panel, accuracy)
+- **scripts/**: Python utilities for VCF conversion and accuracy metrics
+- **envs/**: Conda environment YAMLs for reproducible setups
+- **tests/**: Pytest-based test suite with synthetic data fixtures
+
+## Workflows
+
+### 1. Imputation Pipeline
+- Converts PLINK to VCF, harmonizes (optional), imputes with Beagle or AlphaImpute2
+- Select imputer in `config.yaml` (`beagle` or `alphaimpute2`)
+- Modular rules: per-chromosome, reference panel, and imputer-specific logic
+
+### 2. Accuracy Evaluation
+- Run with `snakemake --snakefile Snakefile_accuracy`
+- Configure in `config_accuracy.yaml`
+- Two modes: `mask_and_impute` (cross-validation) and `cross_array` (array transition)
+- Produces detailed accuracy metrics and summaries
+
+## Scripts
+- `scripts/alphaimpute2_to_vcf.py`: Converts AlphaImpute2 output to VCF
+- `scripts/compute_accuracy_metrics.py`: Computes R², concordance, and summary stats
+
+## Environments
+- `envs/workflow_env.yaml`: Main pipeline dependencies
+- `envs/alphaimpute2_env.yaml`: AlphaImpute2-specific (Python 3.10)
+- `envs/accuracy_env.yaml`: Accuracy evaluation tools
