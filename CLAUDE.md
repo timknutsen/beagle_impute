@@ -106,6 +106,13 @@ Rules in the same group (`intersect`, `conform`, `beagle`) are submitted togethe
   (e.g. `"plink_binary/imputed_data.bed"`) cause parallel runs that share a
   cwd to clobber each other. Use `config["output_dir"] + "/..."` for every
   `output:` field.
+- **plink2 invocations must always pass `--dog`.** The Snakefile prepends
+  `--dog` to `config["plink_extra_flags"]` at parse time so every existing
+  `params.extra_flags` / `params.extra` slot inherits it. When adding a new
+  plink2 rule, route through `config["plink_extra_flags"]` (or pass the same
+  rewritten value) rather than hardcoding flags — this guarantees non-human
+  chromosome codes (1–38) work for every species we run (salmon, trout,
+  livestock, dogs, humans). Do **not** add a separate `--chr-set N` flag.
 - New per-chromosome rules should use `temp(...)` for intermediate VCFs so
   Snakemake cleans them up after `concat_chromosomes`.
 - Heavy rules need an explicit `resources: mem_mb=...` so the SLURM executor

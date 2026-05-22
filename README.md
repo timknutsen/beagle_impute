@@ -29,16 +29,15 @@ reference_vcf: ""                    # Optional phased reference VCF; leave empt
 output_dir: "vcf_output"
 
 plink_path: "plink2"                 # Path to PLINK2 executable
-beagle_jar: "/path/to/beagle.17Dec24.jar"   # Latest Beagle 5.5 JAR
+beagle_jar: "bin/beagle.jar"         # Auto-downloaded on first run (Beagle 5.5)
 conform_gt_jar: ""                   # Only needed if reference_vcf is set
 bref3_jar: ""                        # Optional: path to bref3.jar (same download page as Beagle)
                                      # Converts reference VCF to binary bref3 format once —
                                      # Beagle then loads it 3–43× faster per run
 
-# Species-specific PLINK flags (default: none)
-# Examples:
-#   "--dog --aec"   for canine data with non-standard chromosome names
-#   ""              for human or most other species
+# Extra PLINK flags. `--dog` is ALWAYS prepended automatically so plink2
+# accepts non-human chromosome codes (1–38: salmon, trout, livestock, human).
+# Use this field only for additional dataset-specific flags (e.g. "--maf 0.01").
 plink_extra_flags: ""
 
 beagle_params:
@@ -172,7 +171,7 @@ Setting `bref3_jar` causes the pipeline to convert the reference VCF to bref3 bi
 ### Other notes
 - **`ne`** has a large effect on imputation accuracy for non-human populations. Use a value appropriate for your species — the Beagle default of 1,000,000 is designed for large outbred human populations and performs poorly for livestock and aquaculture species.
 - **`nthreads`** should match the number of CPUs you allocate. Beagle scales well with more threads — the default of 4 is a reasonable starting point; increase for cluster jobs.
-- **`plink_extra_flags`**: Set species-specific PLINK flags here, e.g. `"--dog --aec"` for canine data. Empty by default.
+- **`plink_extra_flags`**: `--dog` is always prepended automatically so non-human chromosome codes (1–38) work for every species we run (salmon, trout, livestock, dogs, humans). Use this field only for *additional* dataset-specific flags (e.g. `"--maf 0.01"`). Empty by default.
 
 ## Project Structure
 

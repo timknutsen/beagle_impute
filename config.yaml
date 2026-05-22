@@ -21,9 +21,10 @@ bref3_jar: ""                            # (Optional) Path to bref3.jar for fast
                                          # Get bref3.jar from the same page as the Beagle JAR.
 
 # --- Extra PLINK flags ---
-# Add species- or dataset-specific flags here, e.g.:
-#   "--dog --aec"   for canine data with non-standard chromosome names
-#   ""              for standard human or most other species
+# `--dog` is ALWAYS prepended automatically by the Snakefile so plink2 accepts
+# non-human chromosome codes (1–38). This covers salmon (29), trout (32), and
+# every livestock species we run. Use this field only for additional, dataset-
+# specific flags (e.g. "--maf 0.01"). Leave empty in the common case.
 plink_extra_flags: ""
 
 # --- Imputer selection ---

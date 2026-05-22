@@ -29,6 +29,13 @@ _beagle_subdir = "imputed_ref" if _use_ref else "imputed"
 
 _use_alphaimpute2 = config.get("imputer", "beagle") == "alphaimpute2"
 
+# Always run plink2 with --dog so non-human chromosome codes (1–38) are
+# accepted. Salmon (29), trout (32), and most livestock fit inside this range,
+# and human data still works because plink2's only check is that codes ≤ 38.
+# This is prepended to any user-supplied plink_extra_flags so a single source
+# of truth flows to every rule via config["plink_extra_flags"].
+config["plink_extra_flags"] = ("--dog " + config.get("plink_extra_flags", "")).strip()
+
 # ---------------------------------------------------------------------------
 # Auto-download helpers
 # If the configured jar path starts with "bin/", treat it as auto-managed and
