@@ -29,14 +29,14 @@ requires_htslib = pytest.mark.skipif(
 # ── GT_MAP ────────────────────────────────────────────────────────────────────
 
 class TestGtMap:
-    def test_hom_ref(self):
-        assert GT_MAP["0"] == "0/0"
+    def test_zero_code_is_hom_alt(self):
+        assert GT_MAP["0"] == "1/1"
 
     def test_het(self):
         assert GT_MAP["1"] == "0/1"
 
-    def test_hom_alt(self):
-        assert GT_MAP["2"] == "1/1"
+    def test_two_code_is_hom_ref(self):
+        assert GT_MAP["2"] == "0/0"
 
     def test_missing(self):
         assert GT_MAP["9"] == "./."

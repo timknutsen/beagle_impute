@@ -6,10 +6,12 @@ AlphaImpute2 genotype format (input):
 
 Output: bgzipped + tabix-indexed VCF using SNP metadata from the PLINK .bim file.
 
-Allele conventions (consistent with plink2 --export A):
-    0 = 0 copies of A1 (ALT) → REF/REF  → VCF 0/0
-    1 = 1 copy  of A1        → REF/ALT  → VCF 0/1
-    2 = 2 copies of A1       → ALT/ALT  → VCF 1/1
+Allele conventions:
+    AlphaImpute2 writes the opposite homozygote coding to the A1-counted
+    dosage emitted by ``plink2 --export A`` in this workflow.
+    0 → ALT/ALT  → VCF 1/1
+    1 → REF/ALT  → VCF 0/1
+    2 → REF/REF  → VCF 0/0
     9 = missing              → VCF ./.
 
 Pure functions (read_bim, read_ai2_genotypes, convert) are importable so that
@@ -20,7 +22,7 @@ import subprocess
 from datetime import date
 
 # Genotype code → VCF GT string
-GT_MAP = {"0": "0/0", "1": "0/1", "2": "1/1", "9": "./."}
+GT_MAP = {"0": "1/1", "1": "0/1", "2": "0/0", "9": "./."}
 
 
 def read_bim(bim_path: str) -> list:
@@ -86,6 +88,8 @@ def convert(genotypes_path: str, bim_path: str, vcf_out_path: str) -> None:
     emit("##fileformat=VCFv4.2")
     emit(f"##fileDate={date.today().strftime('%Y%m%d')}")
     emit("##source=AlphaImpute2")
+    for chrom in dict.fromkeys(chrom for chrom, *_ in snps):
+        emit(f"##contig=<ID={chrom}>")
     emit('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
     emit("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(indivs))
 

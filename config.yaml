@@ -47,7 +47,7 @@ beagle_params:
 # AlphaImpute2 is installed automatically via pip in envs/alphaimpute2_env.yaml.
 # It requires no external JAR — just set imputer above and adjust the options below.
 alphaimpute2_params:
-  maxthreads: 4                   # Parallel threads
+  maxthreads: 1                   # AlphaImpute2 0.0.3 segfaulted with >1 thread on RT24 chr5
   cycles: 4                       # Peeling rounds for pedigree imputation
   final_peeling_threshold: 0.1    # Genotype calling confidence (0.1 = best-guess, 0.9+ = high-confidence only)
   hd_threshold: 0.95              # Proportion non-missing markers to classify an individual as high-density

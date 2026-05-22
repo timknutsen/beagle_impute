@@ -103,6 +103,8 @@ if _acc_mode == "mask_and_impute":
             bfile = config["bfile"],
             out   = _acc_out + "/truth/hd",
             extra = config.get("plink_extra_flags", ""),
+        conda:
+            "../envs/workflow_env.yaml"
         log:
             "logs/accuracy/make_truth_bfile.log",
         shell:
@@ -134,6 +136,8 @@ if _acc_mode == "mask_and_impute":
             bfile = config["bfile"],
             out   = _acc_out + "/to_impute/masked",
             extra = config.get("plink_extra_flags", ""),
+        conda:
+            "../envs/workflow_env.yaml"
         log:
             "logs/accuracy/make_masked_ld_bfile.log",
         shell:
@@ -149,7 +153,10 @@ if _acc_mode == "mask_and_impute":
 
     if _use_alphaimpute2:
         # AlphaImpute2 imputes by having both HD (reference) and LD (validation)
-        # animals in the same dataset.  Create the reference panel and merge.
+        # animals in the same dataset.  For mask-and-impute, build that directly
+        # from the source BED by setting validation genotypes outside the LD
+        # marker panel to missing.  This avoids PLINK2's unfinished
+        # non-concatenating --pmerge path.
 
         rule acc_make_reference_panel:
             """
@@ -169,6 +176,8 @@ if _acc_mode == "mask_and_impute":
                 bfile = config["bfile"],
                 out   = _acc_out + "/reference/panel",
                 extra = config.get("plink_extra_flags", ""),
+            conda:
+                "../envs/workflow_env.yaml"
             log:
                 "logs/accuracy/make_reference_panel.log",
             shell:
@@ -183,38 +192,36 @@ if _acc_mode == "mask_and_impute":
 
         rule acc_merge_for_alphaimpute2:
             """
-            Merge HD reference panel + masked LD validation animals.
-            After the merge, validation animals have missing values at all
-            non-LD positions, which AlphaImpute2 treats as the imputation
-            target (non-HD animals according to hd_threshold).
+            Create a joint AlphaImpute2 input BED.
+            Reference animals remain full-density.  Validation animals keep
+            LD-panel genotypes and have all other markers set missing, which
+            AlphaImpute2 treats as the imputation target.
             """
             input:
-                ref_bed = _acc_out + "/reference/panel.bed",
-                ref_bim = _acc_out + "/reference/panel.bim",
-                ref_fam = _acc_out + "/reference/panel.fam",
-                ld_bed  = _acc_out + "/to_impute/masked.bed",
-                ld_bim  = _acc_out + "/to_impute/masked.bim",
-                ld_fam  = _acc_out + "/to_impute/masked.fam",
+                bed  = config["bfile"] + ".bed",
+                bim  = config["bfile"] + ".bim",
+                fam  = config["bfile"] + ".fam",
+                ids  = _acc_out + "/setup/validation_ids.txt",
+                snps = _acc_out + "/setup/ld_snp_list.txt",
             output:
                 bed = _acc_out + "/to_impute/combined.bed",
                 bim = _acc_out + "/to_impute/combined.bim",
                 fam = _acc_out + "/to_impute/combined.fam",
             params:
-                plink    = config["plink_path"],
-                ref_pref = _acc_out + "/reference/panel",
-                ld_pref  = _acc_out + "/to_impute/masked",
-                out      = _acc_out + "/to_impute/combined",
-                extra    = config.get("plink_extra_flags", ""),
+                bfile = config["bfile"],
+                out   = _acc_out + "/to_impute/combined",
+            conda:
+                "../envs/workflow_env.yaml"
             log:
                 "logs/accuracy/merge_for_alphaimpute2.log",
             shell:
                 """
-                ({params.plink} \
-                    --bfile   {params.ref_pref} \
-                    --bmerge  {params.ld_pref} \
-                    --make-bed \
-                    --out     {params.out} \
-                    --nonfounders --allow-no-sex {params.extra}) &> {log}
+                python {workflow.basedir}/scripts/mask_validation_genotypes.py \
+                    --bfile {params.bfile} \
+                    --validation-ids {input.ids} \
+                    --ld-snps {input.snps} \
+                    --out {params.out} \
+                    &> {log}
                 """
 
         _impute_bfile = _acc_out + "/to_impute/combined"
@@ -277,6 +284,8 @@ elif _acc_mode == "cross_array":
             bfile = config["cross_array"]["ld_bfile"],
             out   = _acc_out + "/to_impute/ld",
             extra = config.get("plink_extra_flags", ""),
+        conda:
+            "../envs/workflow_env.yaml"
         log:
             "logs/accuracy/make_ld_subset.log",
         shell:
@@ -303,6 +312,8 @@ elif _acc_mode == "cross_array":
             bfile = config["cross_array"]["hd_bfile"],
             out   = _acc_out + "/truth/hd",
             extra = config.get("plink_extra_flags", ""),
+        conda:
+            "../envs/workflow_env.yaml"
         log:
             "logs/accuracy/make_hd_truth.log",
         shell:
@@ -341,6 +352,8 @@ if not _use_alphaimpute2:
             out   = _acc_out + "/dedup/chr{chrom}",
             chr   = "{chrom}",
             extra = config.get("plink_extra_flags", ""),
+        conda:
+            "../envs/workflow_env.yaml"
         log:
             "logs/accuracy/dedup_chr{chrom}.log",
         shell:
@@ -449,27 +462,58 @@ if not _use_alphaimpute2:
 
 else:
 
-    rule acc_plink_to_alphaimpute2_fmt:
-        """
-        Export the imputation-input PLINK file to AlphaImpute2 text format.
-        For mask_and_impute this is the merged HD-reference + masked-LD file,
-        so AlphaImpute2 sees both HD and LD animals together and can use the
-        HD animals as a reference panel during pedigree/population imputation.
-        """
+    rule acc_make_alphaimpute2_chrom_bfile:
+        """Split the joint AlphaImpute2 PLINK input by chromosome."""
         input:
             bed = _impute_bfile + ".bed",
             bim = _impute_bfile + ".bim",
             fam = _impute_bfile + ".fam",
         output:
-            genotypes = _acc_out + "/alphaimpute2_input/genotypes.txt",
-            pedigree  = _acc_out + "/alphaimpute2_input/pedigree.txt",
+            bed = temp(_acc_out + "/alphaimpute2_chrom/chr{chrom}.bed"),
+            bim = temp(_acc_out + "/alphaimpute2_chrom/chr{chrom}.bim"),
+            fam = temp(_acc_out + "/alphaimpute2_chrom/chr{chrom}.fam"),
+        params:
+            plink = config["plink_path"],
+            bfile = _impute_bfile,
+            out   = _acc_out + "/alphaimpute2_chrom/chr{chrom}",
+            chr   = "{chrom}",
+            extra = config.get("plink_extra_flags", ""),
+        conda:
+            "../envs/workflow_env.yaml"
+        log:
+            "logs/accuracy/alphaimpute2_chrom_chr{chrom}.log",
+        shell:
+            """
+            ({params.plink} \
+                --bfile {params.bfile} \
+                --chr {params.chr} \
+                --make-bed \
+                --out {params.out} \
+                --nonfounders --allow-no-sex {params.extra}) &> {log}
+            """
+
+    rule acc_plink_to_alphaimpute2_fmt:
+        """
+        Export one chromosome of the imputation-input PLINK file to AlphaImpute2
+        text format.  AlphaImpute2 is run chromosome-wise to avoid treating all
+        chromosomes as one long linkage group and to avoid genome-wide segfaults.
+        """
+        input:
+            bed = _acc_out + "/alphaimpute2_chrom/chr{chrom}.bed",
+            bim = _acc_out + "/alphaimpute2_chrom/chr{chrom}.bim",
+            fam = _acc_out + "/alphaimpute2_chrom/chr{chrom}.fam",
+        output:
+            genotypes = _acc_out + "/alphaimpute2_input/chr{chrom}.genotypes.txt",
+            pedigree  = _acc_out + "/alphaimpute2_input/chr{chrom}.pedigree.txt",
         params:
             plink      = config["plink_path"],
-            bfile      = _impute_bfile,
-            raw_prefix = _acc_out + "/alphaimpute2_input/raw_tmp",
+            bfile      = _acc_out + "/alphaimpute2_chrom/chr{chrom}",
+            raw_prefix = _acc_out + "/alphaimpute2_input/chr{chrom}.raw_tmp",
             extra      = config.get("plink_extra_flags", ""),
+        conda:
+            "../envs/workflow_env.yaml"
         log:
-            "logs/accuracy/plink_to_alphaimpute2.log",
+            "logs/accuracy/plink_to_alphaimpute2_chr{chrom}.log",
         shell:
             """
             (
@@ -493,12 +537,12 @@ else:
 
     rule acc_run_alphaimpute2:
         input:
-            genotypes = _acc_out + "/alphaimpute2_input/genotypes.txt",
-            pedigree  = _acc_out + "/alphaimpute2_input/pedigree.txt",
+            genotypes = _acc_out + "/alphaimpute2_input/chr{chrom}.genotypes.txt",
+            pedigree  = _acc_out + "/alphaimpute2_input/chr{chrom}.pedigree.txt",
         output:
-            genotypes = _acc_out + "/alphaimpute2_output/imputed.genotypes",
+            genotypes = temp(_acc_out + "/alphaimpute2_output/chr{chrom}.genotypes"),
         params:
-            out_prefix  = _acc_out + "/alphaimpute2_output/imputed",
+            out_prefix  = _acc_out + "/alphaimpute2_output/chr{chrom}",
             cycles      = config["alphaimpute2_params"].get("cycles", 4),
             threshold   = config["alphaimpute2_params"].get("final_peeling_threshold", 0.1),
             hd_thresh   = config["alphaimpute2_params"].get("hd_threshold", 0.95),
@@ -513,7 +557,7 @@ else:
         conda:
             "../envs/alphaimpute2_env.yaml"
         log:
-            "logs/accuracy/run_alphaimpute2.log",
+            "logs/accuracy/run_alphaimpute2_chr{chrom}.log",
         resources:
             mem_mb = 16000,
         shell:
@@ -533,23 +577,49 @@ else:
 
     rule acc_alphaimpute2_to_vcf:
         """
-        Convert AlphaImpute2 output to VCF using the imputation-input .bim
-        for variant metadata (contains all SNPs after the merge step).
+        Convert per-chromosome AlphaImpute2 output to VCF using the matching
+        chromosome .bim for variant metadata.
         """
         input:
-            genotypes = _acc_out + "/alphaimpute2_output/imputed.genotypes",
-            bim       = _impute_bfile + ".bim",
+            genotypes = _acc_out + "/alphaimpute2_output/chr{chrom}.genotypes",
+            bim       = _acc_out + "/alphaimpute2_chrom/chr{chrom}.bim",
+        output:
+            vcf = temp(_acc_out + "/alphaimpute2/chr{chrom}.vcf.gz"),
+            tbi = temp(_acc_out + "/alphaimpute2/chr{chrom}.vcf.gz.tbi"),
+        conda:
+            "../envs/workflow_env.yaml"
+        log:
+            "logs/accuracy/alphaimpute2_to_vcf_chr{chrom}.log",
+        resources:
+            mem_mb = 32000,
+        script:
+            "../scripts/alphaimpute2_to_vcf.py"
+
+    rule acc_concat_alphaimpute2:
+        input:
+            vcfs = lambda _: expand(
+                _acc_out + "/alphaimpute2/chr{chrom}.vcf.gz",
+                chrom=acc_get_chromosomes(),
+            ),
         output:
             vcf = _acc_out + "/alphaimpute2/all_chromosomes.vcf.gz",
             tbi = _acc_out + "/alphaimpute2/all_chromosomes.vcf.gz.tbi",
         conda:
             "../envs/workflow_env.yaml"
-        log:
-            "logs/accuracy/alphaimpute2_to_vcf.log",
+        threads: 4
         resources:
-            mem_mb = 32000,
-        script:
-            "../scripts/alphaimpute2_to_vcf.py"
+            mem_mb = 64000,
+        log:
+            "logs/accuracy/concat_alphaimpute2.log",
+        shell:
+            """
+            (bcftools concat \
+                --output      {output.vcf} \
+                --output-type z \
+                --threads     {threads} \
+                {input.vcfs}) 2> {log}
+            tabix -f {output.vcf}
+            """
 
     _acc_final_vcf = _acc_out + "/alphaimpute2/all_chromosomes.vcf.gz"
 

@@ -25,6 +25,10 @@ import pandas as pd
 _acc_mode = config.get("accuracy_mode", "mask_and_impute")
 _acc_out  = config.get("accuracy_output_dir", "accuracy_output")
 
+# Match the main Snakefile convention: default PLINK2 to --dog so non-human
+# chromosome codes up to 38 are accepted in accuracy/cross-validation runs.
+config["plink_extra_flags"] = ("--dog " + config.get("plink_extra_flags", "")).strip()
+
 
 def acc_get_chromosomes():
     """

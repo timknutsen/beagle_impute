@@ -36,6 +36,8 @@ rule plink_to_alphaimpute2_fmt:
         bfile      = config["bfile"],
         raw_prefix = config["output_dir"] + "/alphaimpute2_input/raw_tmp",
         extra      = config.get("plink_extra_flags", ""),
+    conda:
+        "../envs/workflow_env.yaml"
     log:
         "logs/plink_to_alphaimpute2.log",
     shell:
