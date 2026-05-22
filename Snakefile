@@ -77,7 +77,7 @@ _rule_all_inputs = (
     [
         _final_vcf,
         _final_vcf + ".tbi",
-        "plink_binary/imputed_data.bed",
+        config["output_dir"] + "/plink_binary/imputed_data.bed",
     ]
     if _use_alphaimpute2
     else
@@ -89,7 +89,7 @@ _rule_all_inputs = (
     + [
         config["output_dir"] + "/all_chromosomes.vcf.gz",
         config["output_dir"] + "/all_chromosomes.vcf.gz.tbi",
-        "plink_binary/imputed_data.bed",
+        config["output_dir"] + "/plink_binary/imputed_data.bed",
     ]
 )
 
@@ -302,9 +302,9 @@ rule vcf_to_plink:
     input:
         vcf = _final_vcf
     output:
-        bed = "plink_binary/imputed_data.bed",
-        bim = "plink_binary/imputed_data.bim",
-        fam = "plink_binary/imputed_data.fam"
+        bed = config["output_dir"] + "/plink_binary/imputed_data.bed",
+        bim = config["output_dir"] + "/plink_binary/imputed_data.bim",
+        fam = config["output_dir"] + "/plink_binary/imputed_data.fam"
     params:
         plink       = config["plink_path"],
         out_prefix  = lambda wildcards, output: output.bed.rsplit('.', 1)[0],

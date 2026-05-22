@@ -11,6 +11,7 @@ logs/
 # Pipeline outputs (generated data, not source)
 vcf_output/
 plink_binary/
+runs/
 
 # SLURM and temp files
 slurm-*.out
