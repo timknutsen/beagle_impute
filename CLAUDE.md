@@ -57,6 +57,12 @@ Reads `config.yaml` + `config_accuracy.yaml`. Set `accuracy_mode` to one of:
 | `cross_array` | Same animals on two arrays — impute from LD array, compare to HD truth |
 | `kfold_mask_and_impute` | Animal-level K-fold CV against a shared LD panel; can benchmark Beagle vs AlphaImpute2 vs FImpute in one run |
 
+**All three modes score imputed markers only.** The truth bfile is built with
+`--exclude` on the LD panel, because those markers are handed to the imputer as
+observed genotypes and come back unchanged — scoring them would inflate accuracy
+by roughly the panel's share of all markers. When adding a new accuracy mode,
+make sure its truth excludes whatever the imputer was given as input.
+
 The K-fold mode is configured under the `cv:` key (`n_folds`, `target_n_snps`,
 `target_snp_list`, `random_seed`, `imputers`) plus `fimpute_params:`. It writes
 `cv_summary.tsv` (one row per imputer/fold/metric) and `cv_imputer_summary.tsv`

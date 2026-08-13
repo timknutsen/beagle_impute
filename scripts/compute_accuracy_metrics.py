@@ -165,6 +165,31 @@ def load_truth_matrix(vcf: str, samples_file: str, regions_file: str) -> np.ndar
 # Statistics
 # ---------------------------------------------------------------------------
 
+def build_summary(
+    n_samples: int,
+    n_variants_truth: int,
+    n_variants_evaluated: int,
+    valid_r2: pd.Series,
+    concordance: pd.Series,
+) -> pd.DataFrame:
+    """
+    Build the one-row overall summary.
+
+    Kept as a separate function so the CV aggregator's expected schema can be
+    tested against the real producer instead of a hand-written stand-in.
+    """
+    return pd.DataFrame([{
+        "n_samples"            : n_samples,
+        "n_variants_truth"     : n_variants_truth,
+        "n_variants_evaluated" : n_variants_evaluated,
+        "mean_allelic_r2"      : valid_r2.mean(),
+        "median_allelic_r2"    : valid_r2.median(),
+        "pct_r2_ge_0.8"        : (valid_r2 >= 0.8).mean() * 100,
+        "pct_r2_ge_0.9"        : (valid_r2 >= 0.9).mean() * 100,
+        "mean_concordance"     : concordance.mean(),
+    }])
+
+
 def pearsonr_rowwise(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """
     Compute per-row Pearson r between two (n_variants × n_samples) arrays,
@@ -323,16 +348,13 @@ def main():
 
     # ── Overall summary ───────────────────────────────────────────────────────
     valid_r2 = snp_df["allelic_r2"].dropna()
-    summary = pd.DataFrame([{
-        "n_samples"            : len(common_samples),
-        "n_variants_truth"     : len(tru_variants),
-        "n_variants_evaluated" : len(eval_variants),
-        "mean_allelic_r2"      : valid_r2.mean(),
-        "median_allelic_r2"    : valid_r2.median(),
-        "pct_r2_ge_0.8"        : (valid_r2 >= 0.8).mean() * 100,
-        "pct_r2_ge_0.9"        : (valid_r2 >= 0.9).mean() * 100,
-        "mean_concordance"     : snp_df["concordance"].mean(),
-    }])
+    summary = build_summary(
+        n_samples            = len(common_samples),
+        n_variants_truth     = len(tru_variants),
+        n_variants_evaluated = len(eval_variants),
+        valid_r2             = valid_r2,
+        concordance          = snp_df["concordance"],
+    )
     summary.to_csv(
         os.path.join(args.out_dir, "summary.tsv"), sep="\t", index=False
     )

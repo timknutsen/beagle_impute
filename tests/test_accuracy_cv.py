@@ -12,6 +12,7 @@ from fimpute_io import (
     write_fimpute_vcf,
 )
 from aggregate_cv_metrics import aggregate_summaries
+from compute_accuracy_metrics import build_summary
 from test_dryrun import REPO_ROOT, REAL_BFILE, requires_snakemake
 
 
@@ -123,19 +124,32 @@ def test_write_fimpute_vcf_keeps_real_sample_ids_and_variant_metadata(tmp_path):
     assert lines[2].split("\t")[-2:] == ["0/1", "./."]
 
 
-def test_aggregate_summaries_adds_fold_and_imputer_columns(tmp_path):
+def _write_producer_summary(path, mean_concordance):
+    """Write a summary.tsv through the real producer, not a hand-written stand-in."""
+    path.mkdir(parents=True, exist_ok=True)
+    build_summary(
+        n_samples            = 10,
+        n_variants_truth     = 100,
+        n_variants_evaluated = 90,
+        valid_r2             = pd.Series([0.75, 0.85]),
+        concordance          = pd.Series([mean_concordance]),
+    ).to_csv(path / "summary.tsv", sep="\t", index=False)
+
+
+def test_aggregate_summaries_consumes_what_compute_metrics_writes(tmp_path):
+    """
+    Guards the contract between the two scripts.
+
+    compute_accuracy_metrics writes one wide row per fold; the aggregator has
+    to reshape that itself. Feeding it a hand-written long-format file instead
+    would let the two drift apart without any test noticing.
+    """
     for imputer, fold, concordance in [
-        ("beagle", 1, "0.91"),
-        ("beagle", 2, "0.93"),
-        ("fimpute", 1, "0.95"),
+        ("beagle", 1, 0.91),
+        ("beagle", 2, 0.93),
+        ("fimpute", 1, 0.95),
     ]:
-        path = tmp_path / imputer / f"fold{fold}"
-        path.mkdir(parents=True)
-        (path / "summary.tsv").write_text(
-            "metric\tvalue\n"
-            f"mean_concordance\t{concordance}\n"
-            "mean_r2\t0.8\n"
-        )
+        _write_producer_summary(tmp_path / imputer / f"fold{fold}", concordance)
 
     long_df, imputer_df = aggregate_summaries(tmp_path, ["beagle", "fimpute"], [1, 2])
 
@@ -144,6 +158,18 @@ def test_aggregate_summaries_adds_fold_and_imputer_columns(tmp_path):
     assert imputer_df.query("imputer == 'beagle' and metric == 'mean_concordance'")[
         "mean"
     ].iloc[0] == pytest.approx(0.92)
+    # every metric the producer emits should survive the reshape
+    assert set(long_df["metric"]) >= {"mean_allelic_r2", "pct_r2_ge_0.8", "n_samples"}
+
+
+def test_aggregate_summaries_passes_through_long_format(tmp_path):
+    path = tmp_path / "beagle" / "fold1"
+    path.mkdir(parents=True)
+    (path / "summary.tsv").write_text("metric\tvalue\nmean_concordance\t0.9\n")
+
+    long_df, _ = aggregate_summaries(tmp_path, ["beagle"], [1])
+
+    assert long_df.query("metric == 'mean_concordance'")["value"].iloc[0] == pytest.approx(0.9)
 
 
 @requires_snakemake

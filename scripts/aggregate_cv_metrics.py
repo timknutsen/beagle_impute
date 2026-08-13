@@ -9,6 +9,19 @@ from pathlib import Path
 import pandas as pd
 
 
+def _to_long(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalise a per-fold summary.tsv to long (metric, value) form.
+
+    compute_accuracy_metrics.build_summary writes one wide row with a column
+    per metric, so that is the expected shape. A file that is already long is
+    passed through, which keeps hand-written summaries usable.
+    """
+    if set(df.columns) >= {"metric", "value"}:
+        return df[["metric", "value"]].copy()
+    return df.melt(var_name="metric", value_name="value")
+
+
 def aggregate_summaries(
     root: str | Path,
     imputers: list[str],
@@ -22,7 +35,7 @@ def aggregate_summaries(
             path = root / imputer / f"fold{fold}" / "summary.tsv"
             if not path.exists():
                 continue
-            df = pd.read_csv(path, sep="\t")
+            df = _to_long(pd.read_csv(path, sep="\t"))
             df.insert(0, "fold", fold)
             df.insert(0, "imputer", imputer)
             frames.append(df)

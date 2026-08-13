@@ -137,9 +137,18 @@ if _acc_mode == "kfold_mask_and_impute":
             )
 
     rule acc_cv_make_truth_bfile:
+        """
+        Held-out animals, LD panel removed — the truth for comparison.
+
+        The LD panel markers are handed to the imputer as observed genotypes,
+        so they come back unchanged and would score r2 ~ 1.0 by construction.
+        Excluding them here keeps the metrics restricted to markers the
+        imputer actually had to recover.
+        """
         input:
-            bed = config["bfile"] + ".bed",
-            ids = _acc_out + "/setup/fold{fold}_ids.txt",
+            bed  = config["bfile"] + ".bed",
+            ids  = _acc_out + "/setup/fold{fold}_ids.txt",
+            snps = _acc_out + "/setup/ld_snp_list.txt",
         output:
             bed = _acc_out + "/{imputer}/fold{fold}/truth/hd.bed",
             bim = _acc_out + "/{imputer}/fold{fold}/truth/hd.bim",
@@ -158,6 +167,7 @@ if _acc_mode == "kfold_mask_and_impute":
             ({params.plink} \
                 --bfile {params.bfile} \
                 --keep {input.ids} \
+                --exclude {input.snps} \
                 --make-bed \
                 --out {params.out} \
                 --nonfounders --allow-no-sex {params.extra}) &> {log}
@@ -825,10 +835,17 @@ elif _acc_mode == "mask_and_impute":
                 )
 
     rule acc_make_truth_bfile:
-        """Validation animals at full density — serves as the truth for comparison."""
+        """
+        Validation animals with the LD panel removed — the truth for comparison.
+
+        The LD panel markers are given to the imputer as observed genotypes and
+        are returned unchanged, so scoring them would inflate accuracy by
+        roughly the panel's share of all markers. Only masked markers are kept.
+        """
         input:
-            bed = config["bfile"] + ".bed",
-            ids = _acc_out + "/setup/validation_ids.txt",
+            bed  = config["bfile"] + ".bed",
+            ids  = _acc_out + "/setup/validation_ids.txt",
+            snps = _acc_out + "/setup/ld_snp_list.txt",
         output:
             bed = _acc_out + "/truth/hd.bed",
             bim = _acc_out + "/truth/hd.bim",
@@ -846,7 +863,8 @@ elif _acc_mode == "mask_and_impute":
             """
             ({params.plink} \
                 --bfile {params.bfile} \
-                --keep  {input.ids} \
+                --keep    {input.ids} \
+                --exclude {input.snps} \
                 --make-bed \
                 --out   {params.out} \
                 --nonfounders --allow-no-sex {params.extra}) &> {log}
@@ -1033,11 +1051,34 @@ elif _acc_mode == "cross_array":
                 --nonfounders --allow-no-sex {params.extra}) &> {log}
             """
 
-    rule acc_make_hd_truth:
-        """High-density array, common animals only — serves as the truth."""
+    rule acc_ld_marker_list:
+        """
+        Marker IDs carried by the low-density array.
+
+        These are observed rather than imputed, so they are excluded from the
+        high-density truth below to keep the metrics on imputed markers only.
+        """
         input:
-            bed = config["cross_array"]["hd_bfile"] + ".bed",
-            ids = _acc_out + "/setup/common_ids.txt",
+            bim = config["cross_array"]["ld_bfile"] + ".bim",
+        output:
+            snps = _acc_out + "/setup/ld_marker_list.txt",
+        run:
+            import pandas as pd
+
+            bim = pd.read_csv(input.bim, sep=r"\s+", header=None)
+            bim[1].to_csv(output.snps, header=False, index=False)
+
+    rule acc_make_hd_truth:
+        """
+        High-density array, common animals, LD-array markers removed — the truth.
+
+        Markers present on both arrays were genotyped, not imputed. Scoring
+        them would inflate accuracy by the overlap's share of the HD array.
+        """
+        input:
+            bed  = config["cross_array"]["hd_bfile"] + ".bed",
+            ids  = _acc_out + "/setup/common_ids.txt",
+            snps = _acc_out + "/setup/ld_marker_list.txt",
         output:
             bed = _acc_out + "/truth/hd.bed",
             bim = _acc_out + "/truth/hd.bim",
@@ -1055,7 +1096,8 @@ elif _acc_mode == "cross_array":
             """
             ({params.plink} \
                 --bfile {params.bfile} \
-                --keep  {input.ids} \
+                --keep    {input.ids} \
+                --exclude {input.snps} \
                 --make-bed \
                 --out   {params.out} \
                 --nonfounders --allow-no-sex {params.extra}) &> {log}

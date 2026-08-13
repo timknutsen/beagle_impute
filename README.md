@@ -146,6 +146,13 @@ the held-out LD animals as `gt=` and the non-held-out full-density animals as
 `ref=`; AlphaImpute2 and FImpute use a combined dataset where only the held-out
 animals are masked outside the LD panel.
 
+**Accuracy is measured on imputed markers only.** The truth set excludes the LD
+panel, since those markers were given to the imputer as observed genotypes and
+are returned unchanged — including them would inflate the reported accuracy by
+roughly `n_panel / n_total` (on a 50K chip with a 10k panel, about a fifth of
+all markers). The same exclusion applies to `mask_and_impute` and, for the
+overlap between the two arrays, to `cross_array`.
+
 Command-line overrides use flat names because Snakemake does not accept dotted
 keys in `--config`:
 
