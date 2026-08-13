@@ -382,7 +382,7 @@ if _acc_mode == "kfold_mask_and_impute":
             "../envs/workflow_env.yaml"
         resources:
             mem_mb = 70000,
-            slurm_partition = "r6i-ondemand-4xlarge",
+            slurm_partition = "r7i-ondemand-4xlarge",
         log:
             "logs/accuracy_cv/beagle_fold{fold}_chr{chrom}.log",
         shell:
@@ -410,7 +410,7 @@ if _acc_mode == "kfold_mask_and_impute":
         threads: 4
         resources:
             mem_mb = 64000,
-            slurm_partition = "r6i-ondemand-4xlarge",
+            slurm_partition = "r7i-ondemand-4xlarge",
         log:
             "logs/accuracy_cv/beagle_fold{fold}_concat.log",
         shell:
@@ -506,7 +506,7 @@ if _acc_mode == "kfold_mask_and_impute":
             "../envs/alphaimpute2_env.yaml"
         resources:
             mem_mb = 16000,
-            slurm_partition = "r6i-ondemand-2xlarge",
+            slurm_partition = "r7i-ondemand-2xlarge",
         log:
             "logs/accuracy_cv/alphaimpute2_fold{fold}_chr{chrom}.log",
         shell:
@@ -535,7 +535,7 @@ if _acc_mode == "kfold_mask_and_impute":
             "../envs/workflow_env.yaml"
         resources:
             mem_mb = 32000,
-            slurm_partition = "r6i-ondemand-2xlarge",
+            slurm_partition = "r7i-ondemand-2xlarge",
         log:
             "logs/accuracy_cv/alphaimpute2_fold{fold}_to_vcf_chr{chrom}.log",
         script:
@@ -556,7 +556,7 @@ if _acc_mode == "kfold_mask_and_impute":
         threads: 4
         resources:
             mem_mb = 64000,
-            slurm_partition = "r6i-ondemand-4xlarge",
+            slurm_partition = "r7i-ondemand-4xlarge",
         log:
             "logs/accuracy_cv/alphaimpute2_fold{fold}_concat.log",
         shell:
@@ -656,7 +656,7 @@ if _acc_mode == "kfold_mask_and_impute":
             _fimpute_nthreads
         resources:
             mem_mb = 32000,
-            slurm_partition = "r6i-ondemand-2xlarge",
+            slurm_partition = "r7i-ondemand-2xlarge",
         log:
             "logs/accuracy_cv/fimpute_fold{fold}_run_chr{chrom}.log",
         shell:
@@ -703,7 +703,7 @@ if _acc_mode == "kfold_mask_and_impute":
         threads: 4
         resources:
             mem_mb = 64000,
-            slurm_partition = "r6i-ondemand-4xlarge",
+            slurm_partition = "r7i-ondemand-4xlarge",
         log:
             "logs/accuracy_cv/fimpute_fold{fold}_concat.log",
         shell:
@@ -1194,6 +1194,7 @@ if not _use_alphaimpute2:
             "logs/accuracy/beagle_chr{chrom}.log",
         resources:
             mem_mb = 70000,
+            slurm_partition = "r7i-ondemand-4xlarge",
         shell:
             """
             (java -Xmx{params.heap_mb}m -jar {params.beagle} \
@@ -1221,6 +1222,7 @@ if not _use_alphaimpute2:
         threads: 4
         resources:
             mem_mb = 64000,
+            slurm_partition = "r7i-ondemand-4xlarge",
         log:
             "logs/accuracy/concat_imputed.log",
         shell:
@@ -1339,6 +1341,7 @@ else:
             "logs/accuracy/run_alphaimpute2_chr{chrom}.log",
         resources:
             mem_mb = 16000,
+            slurm_partition = "r7i-ondemand-2xlarge",
         shell:
             """
             mkdir -p "$(dirname {output.genotypes})"
@@ -1371,6 +1374,7 @@ else:
             "logs/accuracy/alphaimpute2_to_vcf_chr{chrom}.log",
         resources:
             mem_mb = 32000,
+            slurm_partition = "r7i-ondemand-2xlarge",
         script:
             "../scripts/alphaimpute2_to_vcf.py"
 
@@ -1388,6 +1392,7 @@ else:
         threads: 4
         resources:
             mem_mb = 64000,
+            slurm_partition = "r7i-ondemand-4xlarge",
         log:
             "logs/accuracy/concat_alphaimpute2.log",
         shell:

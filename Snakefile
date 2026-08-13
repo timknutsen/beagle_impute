@@ -221,7 +221,7 @@ rule run_beagle:
         "logs/beagle_chr{chrom}.log"
     resources:
         mem_mb = 70000,
-        slurm_partition = "r6i-ondemand-4xlarge"
+        slurm_partition = "r7i-ondemand-4xlarge"
     group:
         "beagle"
     shell:
@@ -266,7 +266,7 @@ if _use_ref:
             "logs/merge_imputed_chr{chrom}.log"
         resources:
             mem_mb = 16000,
-            slurm_partition = "r6i-ondemand-2xlarge"
+            slurm_partition = "r7i-ondemand-2xlarge"
         shell:
             """
             (bcftools concat \
@@ -308,7 +308,7 @@ rule concat_chromosomes:
     threads: 4
     resources:
         mem_mb = 64000,
-        slurm_partition = "r6i-ondemand-4xlarge"
+        slurm_partition = "r7i-ondemand-4xlarge"
     log:
         "logs/concat_chromosomes.log"
     shell:
