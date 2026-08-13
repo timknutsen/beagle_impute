@@ -123,26 +123,32 @@ Rules in the same group (`intersect`, `conform`, `beagle`) are submitted togethe
 
 This cluster's partitions are split by node size, so every heavy rule must
 declare `slurm_partition` in `resources:` — without it Snakemake submits to
-the default `r6i-ondemand-large` (15 GiB / 2 CPU) and sbatch rejects the job
+the default `r7i-ondemand-large` (15 GiB / 2 CPU) and sbatch rejects the job
 ("CPU count per node can not be satisfied").
 
 | Rule | `mem_mb` | `slurm_partition` |
 |------|---------:|-------------------|
-| `run_beagle` | 70000 | `r6i-ondemand-4xlarge` (124 GiB / 16 CPU) |
-| `concat_chromosomes` | 64000 | `r6i-ondemand-4xlarge` |
-| `bcftools_isec` / `conform_gt` | 32000 | `r6i-ondemand-2xlarge` (62 GiB / 8 CPU) |
-| `merge_imputed_with_target_only` / `convert_ref_to_bref3` | 16000 | `r6i-ondemand-2xlarge` |
-| `make_per_chrom_vcf` / `normalize_vcf` / `vcf_to_plink` | (none) | default `r6i-ondemand-large` |
-| `acc_cv_run_beagle` | 70000 | `r6i-ondemand-4xlarge` |
-| `acc_cv_concat_*` | 64000 | `r6i-ondemand-4xlarge` |
-| `acc_cv_alphaimpute2_to_vcf` / `acc_cv_run_fimpute` | 32000 | `r6i-ondemand-2xlarge` |
-| `acc_cv_run_alphaimpute2` | 16000 | `r6i-ondemand-2xlarge` |
+| `run_beagle` | 70000 | `r7i-ondemand-4xlarge` (124 GiB / 16 CPU) |
+| `concat_chromosomes` | 64000 | `r7i-ondemand-4xlarge` |
+| `bcftools_isec` / `conform_gt` | 32000 | `r7i-ondemand-2xlarge` (62 GiB / 8 CPU) |
+| `merge_imputed_with_target_only` / `convert_ref_to_bref3` | 16000 | `r7i-ondemand-2xlarge` |
+| `make_per_chrom_vcf` / `normalize_vcf` / `vcf_to_plink` | (none) | default `r7i-ondemand-large` |
+| `acc_cv_run_beagle` | 70000 | `r7i-ondemand-4xlarge` |
+| `acc_cv_concat_*` | 64000 | `r7i-ondemand-4xlarge` |
+| `acc_cv_alphaimpute2_to_vcf` / `acc_cv_run_fimpute` | 32000 | `r7i-ondemand-2xlarge` |
+| `acc_cv_run_alphaimpute2` | 16000 | `r7i-ondemand-2xlarge` |
+| `acc_run_beagle` | 70000 | `r7i-ondemand-4xlarge` |
+| `acc_concat_imputed` / `acc_concat_alphaimpute2` | 64000 | `r7i-ondemand-4xlarge` |
+| `acc_alphaimpute2_to_vcf` | 32000 | `r7i-ondemand-2xlarge` |
+| `acc_run_alphaimpute2` | 16000 | `r7i-ondemand-2xlarge` |
 
-Known gap: the older `acc_*` rules in `rules/accuracy.smk` (`acc_run_beagle`,
-`acc_concat_imputed`, `acc_run_alphaimpute2`, `acc_alphaimpute2_to_vcf`,
-`acc_concat_alphaimpute2`) declare `mem_mb` but no `slurm_partition`, so
-`mask_and_impute` / `cross_array` currently only run reliably with a local
-executor. The `acc_cv_*` rules do declare it.
+All accuracy modes (`mask_and_impute`, `cross_array`, `kfold_mask_and_impute`)
+now declare partitions on every heavy rule and run under the SLURM executor.
+
+Partition names track the cluster's current node generation — as of
+2026-08-13 that is `r7i-*` (the `r6i-*` names used earlier no longer exist;
+only `r6i-ondemand-24xlarge` survives). Re-check with `sinfo` if sbatch starts
+reporting `invalid partition specified`.
 
 When adding a new rule that needs >15 GiB RAM, pick the smallest partition
 whose `RealMemory` (see `sinfo -o "%P %m %c"`) is ≥ the rule's `mem_mb`, and
