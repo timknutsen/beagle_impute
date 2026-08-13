@@ -7,12 +7,29 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 
 def get_chromosomes(bfile):
-    bim = pd.read_csv(f"{bfile}.bim", sep='\t', header=None)
-    chroms = [chr for chr in bim[0].unique() if chr != 0]
-    return sorted(chroms, key=int)
+    # PLINK writes .bim tab-separated, but files that have passed through awk
+    # or other tools are often space-separated; \s+ accepts both.
+    bim = pd.read_csv(f"{bfile}.bim", sep=r"\s+", header=None)
+    chroms = [str(c) for c in bim[0].unique() if str(c) not in ("0", "")]
+    # Numeric codes sort numerically; anything else (X, Y, MT, scaffolds)
+    # sorts after them alphabetically instead of raising ValueError.
+    return sorted(chroms, key=lambda c: (0, int(c), "") if c.isdigit() else (1, 0, c))
 
 def get_chroms():
     return get_chromosomes(config["bfile"])
+
+# ---------------------------------------------------------------------------
+# Java heap sizing
+#
+# -Xmx bounds the heap only; metaspace, thread stacks, GC structures and native
+# buffers live outside it. Handing Java the full cgroup limit therefore invites
+# an OOM kill once the heap actually fills, so leave headroom.
+# ---------------------------------------------------------------------------
+
+_JAVA_HEAP_FRACTION = 0.85
+
+def java_heap_mb(mem_mb):
+    return max(1024, int(mem_mb * _JAVA_HEAP_FRACTION))
 
 # ---------------------------------------------------------------------------
 # Parse-time feature flags
@@ -135,7 +152,7 @@ rule make_per_chrom_vcf:
             --allow-no-sex \
             --bfile {params.bfile} \
             --chr {params.chr} \
-            --export vcf bgz \
+            --export vcf bgz id-paste=iid \
             {params.extra_flags} \
             --out {params.out_prefix} \
             --snps-only) &> {log}
@@ -195,7 +212,8 @@ rule run_beagle:
                 f"ref={input.bref3}" if _use_bref3
                 else f"ref={config['reference_vcf']}" if _use_ref
                 else ""
-        )
+        ),
+        heap_mb   = java_heap_mb(70000)
     threads: config["beagle_params"]["nthreads"]
     conda:
         "envs/workflow_env.yaml"
@@ -209,7 +227,7 @@ rule run_beagle:
     shell:
         """
         (
-            java -Xmx{resources.mem_mb}m -jar {params.beagle} \
+            java -Xmx{params.heap_mb}m -jar {params.beagle} \
                 gt={input.vcf} \
                 {params.ref_param} \
                 window={params.window} \
@@ -308,6 +326,11 @@ rule concat_chromosomes:
 # Final VCF to PLINK binary
 # ---------------------------------------------------------------------------
 
+# make_per_chrom_vcf exports with id-paste=iid, so the VCF sample name is the
+# original IID and --const-fid reads it back unchanged. Without id-paste the
+# export would emit FID_IID and that whole string would land in the IID column,
+# breaking any downstream join on animal ID. FID itself is not carried through
+# the VCF and is set to 0 here.
 rule vcf_to_plink:
     input:
         vcf = _final_vcf

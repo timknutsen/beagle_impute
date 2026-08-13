@@ -276,7 +276,7 @@ if _acc_mode == "kfold_mask_and_impute":
             """
             ({params.plink} \
                 --bfile {params.bfile} \
-                --export vcf bgz \
+                --export vcf bgz id-paste=iid \
                 --nonfounders --allow-no-sex \
                 {params.extra} \
                 --out {params.out} \
@@ -304,7 +304,7 @@ if _acc_mode == "kfold_mask_and_impute":
         shell:
             """
             ({params.plink} --bfile {params.bfile} --chr {params.chr} \
-                --export vcf bgz {params.extra} --out {params.out} \
+                --export vcf bgz id-paste=iid {params.extra} --out {params.out} \
                 --nonfounders --allow-no-sex --snps-only) &> {log}
             """
 
@@ -326,7 +326,7 @@ if _acc_mode == "kfold_mask_and_impute":
         shell:
             """
             ({params.plink} --bfile {params.bfile} --chr {params.chr} \
-                --export vcf bgz {params.extra} --out {params.out} \
+                --export vcf bgz id-paste=iid {params.extra} --out {params.out} \
                 --nonfounders --allow-no-sex --snps-only) &> {log}
             """
 
@@ -375,6 +375,7 @@ if _acc_mode == "kfold_mask_and_impute":
             overlap = config["beagle_params"]["overlap"],
             ne      = config["beagle_params"]["ne"],
             outbase = lambda wc: _cv_prefix("beagle", wc.fold, f"imputed/chr{wc.chrom}"),
+            heap_mb = java_heap_mb(70000),
         threads:
             config["beagle_params"]["nthreads"]
         conda:
@@ -386,7 +387,7 @@ if _acc_mode == "kfold_mask_and_impute":
             "logs/accuracy_cv/beagle_fold{fold}_chr{chrom}.log",
         shell:
             """
-            (java -Xmx{resources.mem_mb}m -jar {params.beagle} \
+            (java -Xmx{params.heap_mb}m -jar {params.beagle} \
                 gt={input.gt} ref={input.ref} \
                 window={params.window} overlap={params.overlap} \
                 out={params.outbase} nthreads={threads} ne={params.ne} \
@@ -1139,7 +1140,7 @@ if not _use_alphaimpute2:
                 --nonfounders --allow-no-sex \
                 --bfile {params.bfile} \
                 --chr   {params.chr} \
-                --export vcf bgz {params.extra} \
+                --export vcf bgz id-paste=iid {params.extra} \
                 --out    {params.out} \
                 --snps-only) &> {log}
             """
@@ -1184,6 +1185,7 @@ if not _use_alphaimpute2:
                     else ""
                 )
             ),
+            heap_mb   = java_heap_mb(70000),
         threads:
             config["beagle_params"]["nthreads"]
         conda:
@@ -1194,7 +1196,7 @@ if not _use_alphaimpute2:
             mem_mb = 70000,
         shell:
             """
-            (java -Xmx{resources.mem_mb}m -jar {params.beagle} \
+            (java -Xmx{params.heap_mb}m -jar {params.beagle} \
                 gt={input.vcf} {params.ref_param} \
                 window={params.window} \
                 overlap={params.overlap} \
@@ -1424,7 +1426,7 @@ rule acc_truth_to_vcf:
         """
         ({params.plink} \
             --bfile {params.bfile} \
-            --export vcf bgz \
+            --export vcf bgz id-paste=iid \
             --nonfounders --allow-no-sex \
             {params.extra} \
             --out    {params.out} \

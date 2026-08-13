@@ -46,8 +46,18 @@ def acc_get_chromosomes():
         bfile = config["cross_array"]["ld_bfile"]
     else:
         bfile = config["bfile"]
-    bim = pd.read_csv(f"{bfile}.bim", sep="\t", header=None)
-    return sorted([c for c in bim[0].unique() if c != 0], key=int)
+    bim = pd.read_csv(f"{bfile}.bim", sep=r"\s+", header=None)
+    chroms = [str(c) for c in bim[0].unique() if str(c) not in ("0", "")]
+    return sorted(chroms, key=lambda c: (0, int(c), "") if c.isdigit() else (1, 0, c))
+
+
+# See the matching comment in Snakefile: -Xmx bounds the heap only, so leave
+# room for the JVM's own allocations inside the cgroup limit.
+_JAVA_HEAP_FRACTION = 0.85
+
+
+def java_heap_mb(mem_mb):
+    return max(1024, int(mem_mb * _JAVA_HEAP_FRACTION))
 
 
 include: "rules/accuracy.smk"

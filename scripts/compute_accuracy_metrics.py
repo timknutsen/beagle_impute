@@ -242,6 +242,32 @@ def main():
             "reference genome and allele orientation were used."
         )
 
+    # bcftools -R selects by CHROM/POS, so two records sharing a position both
+    # come back and the matrices no longer line up with eval_variants. Such
+    # positions cannot be matched unambiguously, so drop them rather than
+    # aborting the whole run on a handful of duplicates.
+    pos_counts = {}
+    for v in eval_variants:
+        chrom, pos, *_ = v.split(":", 3)
+        pos_counts[(chrom, pos)] = pos_counts.get((chrom, pos), 0) + 1
+
+    duplicated = {key for key, count in pos_counts.items() if count > 1}
+    if duplicated:
+        eval_variants = [
+            v for v in eval_variants
+            if tuple(v.split(":", 3)[:2]) not in duplicated
+        ]
+        print(
+            f"WARNING: skipping {len(duplicated)} position(s) carrying more than "
+            "one variant; they cannot be matched unambiguously by CHROM/POS.",
+            flush=True,
+        )
+        if not eval_variants:
+            sys.exit(
+                "ERROR: every shared variant sits at a duplicated position.\n"
+                "Run 'bcftools norm -d snps' on both inputs first."
+            )
+
     print(f"Common samples     : {len(common_samples)}", flush=True)
     print(f"Truth variants     : {len(tru_variants)}", flush=True)
     print(f"Evaluated variants : {len(eval_variants)}", flush=True)

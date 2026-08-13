@@ -50,7 +50,7 @@ rule conform_gt:
         slurm_partition = "r6i-ondemand-2xlarge"
     shell:
         """
-        java -Xmx{resources.mem_mb}m -jar {params.conform_jar} \
+        java -Xmx{params.heap_mb}m -jar {params.conform_jar} \
             ref={input.ref} \
             gt={input.vcf} \
             chrom={wildcards.chrom} \

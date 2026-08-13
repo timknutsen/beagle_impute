@@ -7,6 +7,7 @@ import argparse
 import gzip
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 
@@ -25,10 +26,34 @@ def _sex_to_fimpute(value: object) -> str:
     return "U"
 
 
+FIMPUTE_MISSING = 5
+
+
 def _raw_value_to_fimpute(value: object) -> str:
+    """Single-value form of the raw → FImpute mapping (kept for readability/tests)."""
     if pd.isna(value) or str(value) == "NA":
-        return "5"
+        return str(FIMPUTE_MISSING)
     return str(int(float(value)))
+
+
+def _raw_block_to_fimpute_strings(block: pd.DataFrame) -> list[str]:
+    """
+    Vectorised equivalent of joining _raw_value_to_fimpute over every column.
+
+    The per-row/per-column form is O(n_animals x n_markers) Python-level
+    operations, which on a real dataset (10k animals, 50k markers) is hundreds
+    of millions of pandas lookups. Here the whole block is converted once in
+    numpy and sliced into fixed-width ASCII rows instead.
+    """
+    values = block.to_numpy(dtype="float64", na_value=np.nan)
+    codes = np.where(np.isnan(values), FIMPUTE_MISSING, values).astype(np.uint8)
+    # FImpute codes are single digits, so the byte value is just the ASCII digit.
+    ascii_rows = (codes + ord("0")).tobytes()
+    width = codes.shape[1]
+    return [
+        ascii_rows[i * width : (i + 1) * width].decode("ascii")
+        for i in range(codes.shape[0])
+    ]
 
 
 def write_fimpute_inputs_from_raw(
@@ -74,10 +99,7 @@ def write_fimpute_inputs_from_raw(
         {
             "ID": [short_ids[iid] for iid in raw["IID"].astype(str)],
             "Chip": "1",
-            "Genotypes": [
-                "".join(_raw_value_to_fimpute(row[col]) for col in geno_cols)
-                for _, row in raw.iterrows()
-            ],
+            "Genotypes": _raw_block_to_fimpute_strings(raw[geno_cols]),
         }
     )
 

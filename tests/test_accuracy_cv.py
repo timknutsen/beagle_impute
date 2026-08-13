@@ -7,6 +7,8 @@ import pytest
 
 from make_accuracy_cv_setup import assign_folds, choose_ld_panel
 from fimpute_io import (
+    _raw_block_to_fimpute_strings,
+    _raw_value_to_fimpute,
     fimpute_calls_to_vcf_gt,
     write_fimpute_inputs_from_raw,
     write_fimpute_vcf,
@@ -122,6 +124,32 @@ def test_write_fimpute_vcf_keeps_real_sample_ids_and_variant_metadata(tmp_path):
         "1", "100", "snp1", "G", "A", ".", "PASS", ".", "GT", "0/0", "1/1"
     ]
     assert lines[2].split("\t")[-2:] == ["0/1", "./."]
+
+
+def test_vectorised_fimpute_encoding_matches_the_scalar_mapping():
+    """
+    The fast path must agree with the readable one on every code, including NA.
+
+    _raw_block_to_fimpute_strings replaced a per-cell loop for speed; this pins
+    the two together so an optimisation cannot silently change the encoding.
+    """
+    block = pd.DataFrame(
+        {
+            "snp1": [0, 1, 2, None],
+            "snp2": [2, None, 0, 1],
+            "snp3": [None, 0, 1, 2],
+        }
+    )
+
+    fast = _raw_block_to_fimpute_strings(block)
+    slow = [
+        "".join(_raw_value_to_fimpute(value) for value in row)
+        for _, row in block.iterrows()
+    ]
+
+    assert fast == slow
+    assert fast[0] == "025"   # 0, 2, NA
+    assert fast[3] == "512"   # NA, 1, 2
 
 
 def _write_producer_summary(path, mean_concordance):

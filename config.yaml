@@ -5,7 +5,12 @@
 #   snakemake --config bfile=/path/to/mydata plink_path=/path/to/plink2
 
 # --- Input ---
-bfile: "tests/data/test_salmon"         # Prefix of PLINK .bed/.bim/.fam files
+# Prefix of the PLINK .bed/.bim/.fam files to impute. Point this at your own
+# dataset, or override it per run with --config bfile=/path/to/data.
+# The default below is the small synthetic fixture used by the test suite, so a
+# run left unedited completes in seconds against 650 markers rather than your
+# real data — check this line before launching a production run.
+bfile: "tests/data/test_salmon"
 reference_vcf: ""                        # (Optional) phased reference VCF for harmonization;
                                          # leave empty to skip bcftools_isec + conform-gt steps
 
