@@ -6,7 +6,7 @@
 # This workflow evaluates how accurately the pipeline imputes
 # genotypes by comparing imputed calls against known truth.
 #
-# Two modes are supported:
+# Three modes are supported:
 #
 #   mask_and_impute  — take your existing bfile, withhold a fraction of
 #                      animals, mask them to a lower SNP density, impute,
@@ -19,6 +19,12 @@
 #                      the low-density array and compare to the high-density
 #                      truth. Good for: evaluating accuracy across a real
 #                      array transition (e.g. 50K → 700K).
+#
+#   kfold_mask_and_impute
+#                    — animal-level K-fold CV.  For each fold, held-out
+#                      animals are masked to a shared LD SNP panel while the
+#                      other folds remain full-density references.  This mode
+#                      can compare Beagle, AlphaImpute2, and FImpute.
 
 # ── Mode ─────────────────────────────────────────────────────────────────────
 # Choose one: "mask_and_impute" or "cross_array"
@@ -46,6 +52,18 @@ cross_array:
                                # e.g. "data/animals_50k"
   hd_bfile: ""                 # PLINK prefix of high-density array (truth)
                                # e.g. "data/animals_700k"
+
+# ── kfold_mask_and_impute settings ──────────────────────────────────────────
+cv:
+  n_folds: 10
+  target_n_snps: 10000
+  target_snp_list: ""          # Optional fixed SNP list; leave empty to sample from .bim.
+  random_seed: 42
+  imputers: ["beagle", "alphaimpute2", "fimpute"]
+
+fimpute_params:
+  executable: "/mnt/efshome/applications/FImpute3/2026/FImpute3"
+  nthreads: 1
 
 # ── Accuracy metric settings ─────────────────────────────────────────────────
 # MAF bin boundaries for stratified accuracy reporting.

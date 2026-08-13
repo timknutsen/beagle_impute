@@ -49,7 +49,29 @@ Test fixtures are generated synthetically at runtime in a temp dir — no binary
 snakemake --snakefile Snakefile_accuracy --use-conda --cores 8
 ```
 
-Reads `config.yaml` + `config_accuracy.yaml`. Set `accuracy_mode: mask_and_impute` or `cross_array`.
+Reads `config.yaml` + `config_accuracy.yaml`. Set `accuracy_mode` to one of:
+
+| Mode | What it does |
+|------|--------------|
+| `mask_and_impute` | Hold out one validation set, mask it to LD density, impute, compare to truth |
+| `cross_array` | Same animals on two arrays — impute from LD array, compare to HD truth |
+| `kfold_mask_and_impute` | Animal-level K-fold CV against a shared LD panel; can benchmark Beagle vs AlphaImpute2 vs FImpute in one run |
+
+**All three modes score imputed markers only.** The truth bfile is built with
+`--exclude` on the LD panel, because those markers are handed to the imputer as
+observed genotypes and come back unchanged — scoring them would inflate accuracy
+by roughly the panel's share of all markers. When adding a new accuracy mode,
+make sure its truth excludes whatever the imputer was given as input.
+
+The K-fold mode is configured under the `cv:` key (`n_folds`, `target_n_snps`,
+`target_snp_list`, `random_seed`, `imputers`) plus `fimpute_params:`. It writes
+`cv_summary.tsv` (one row per imputer/fold/metric) and `cv_imputer_summary.tsv`
+(mean/SD by imputer), whereas the other two modes write `summary.tsv` +
+`metrics_by_{maf_bin,snp,individual}.tsv`. `rule accuracy_all` switches its
+target list on the mode.
+
+Snakemake rejects dotted keys in `--config`, so CLI overrides use flat aliases
+(`cv_n_folds=10`, `cv_target_n_snps=10000`, `cv_imputers="beagle alphaimpute2 fimpute"`).
 
 ## Architecture
 
@@ -86,9 +108,14 @@ normalize_vcf → bcftools_isec → conform_gt → run_beagle → merge_imputed_
 - `Snakefile` — main entry point; all Beagle rules + concat + vcf_to_plink
 - `rules/intersect_and_conform.smk` — `bcftools_isec`, `conform_gt`, `convert_ref_to_bref3` (only loaded when `reference_vcf` is set)
 - `rules/alphaimpute2.smk` — AlphaImpute2 mode rules (only loaded when `imputer: "alphaimpute2"`)
-- `rules/accuracy.smk` — imputation accuracy evaluation (only used via `Snakefile_accuracy`)
+- `rules/accuracy.smk` — imputation accuracy evaluation (only used via `Snakefile_accuracy`).
+  Holds two parallel rule families: `acc_*` for `mask_and_impute`/`cross_array`,
+  and `acc_cv_*` for `kfold_mask_and_impute`.
 - `scripts/alphaimpute2_to_vcf.py` — converts AlphaImpute2 output to VCF
 - `scripts/compute_accuracy_metrics.py` — concordance/r² metrics for accuracy evaluation
+- `scripts/make_accuracy_cv_setup.py` — deterministic CV fold assignment + shared LD SNP panel
+- `scripts/fimpute_io.py` — PLINK raw ↔ FImpute input/output conversion
+- `scripts/aggregate_cv_metrics.py` — aggregates per-fold CV summaries into `cv_summary.tsv`
 
 ### Conda environments
 
@@ -102,16 +129,32 @@ Rules in the same group (`intersect`, `conform`, `beagle`) are submitted togethe
 
 This cluster's partitions are split by node size, so every heavy rule must
 declare `slurm_partition` in `resources:` — without it Snakemake submits to
-the default `r6i-ondemand-large` (15 GiB / 2 CPU) and sbatch rejects the job
+the default `r7i-ondemand-large` (15 GiB / 2 CPU) and sbatch rejects the job
 ("CPU count per node can not be satisfied").
 
 | Rule | `mem_mb` | `slurm_partition` |
 |------|---------:|-------------------|
-| `run_beagle` | 70000 | `r6i-ondemand-4xlarge` (124 GiB / 16 CPU) |
-| `concat_chromosomes` | 64000 | `r6i-ondemand-4xlarge` |
-| `bcftools_isec` / `conform_gt` | 32000 | `r6i-ondemand-2xlarge` (62 GiB / 8 CPU) |
-| `merge_imputed_with_target_only` / `convert_ref_to_bref3` | 16000 | `r6i-ondemand-2xlarge` |
-| `make_per_chrom_vcf` / `normalize_vcf` / `vcf_to_plink` | (none) | default `r6i-ondemand-large` |
+| `run_beagle` | 70000 | `r7i-ondemand-4xlarge` (124 GiB / 16 CPU) |
+| `concat_chromosomes` | 64000 | `r7i-ondemand-4xlarge` |
+| `bcftools_isec` / `conform_gt` | 32000 | `r7i-ondemand-2xlarge` (62 GiB / 8 CPU) |
+| `merge_imputed_with_target_only` / `convert_ref_to_bref3` | 16000 | `r7i-ondemand-2xlarge` |
+| `make_per_chrom_vcf` / `normalize_vcf` / `vcf_to_plink` | (none) | default `r7i-ondemand-large` |
+| `acc_cv_run_beagle` | 70000 | `r7i-ondemand-4xlarge` |
+| `acc_cv_concat_*` | 64000 | `r7i-ondemand-4xlarge` |
+| `acc_cv_alphaimpute2_to_vcf` / `acc_cv_run_fimpute` | 32000 | `r7i-ondemand-2xlarge` |
+| `acc_cv_run_alphaimpute2` | 16000 | `r7i-ondemand-2xlarge` |
+| `acc_run_beagle` | 70000 | `r7i-ondemand-4xlarge` |
+| `acc_concat_imputed` / `acc_concat_alphaimpute2` | 64000 | `r7i-ondemand-4xlarge` |
+| `acc_alphaimpute2_to_vcf` | 32000 | `r7i-ondemand-2xlarge` |
+| `acc_run_alphaimpute2` | 16000 | `r7i-ondemand-2xlarge` |
+
+All accuracy modes (`mask_and_impute`, `cross_array`, `kfold_mask_and_impute`)
+now declare partitions on every heavy rule and run under the SLURM executor.
+
+Partition names track the cluster's current node generation — as of
+2026-08-13 that is `r7i-*` (the `r6i-*` names used earlier no longer exist;
+only `r6i-ondemand-24xlarge` survives). Re-check with `sinfo` if sbatch starts
+reporting `invalid partition specified`.
 
 When adding a new rule that needs >15 GiB RAM, pick the smallest partition
 whose `RealMemory` (see `sinfo -o "%P %m %c"`) is ≥ the rule's `mem_mb`, and
