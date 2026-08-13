@@ -45,6 +45,14 @@ _use_bref3 = _use_ref and bool(config.get("bref3_jar", "").strip())
 _beagle_subdir = "imputed_ref" if _use_ref else "imputed"
 
 _use_alphaimpute2 = config.get("imputer", "beagle") == "alphaimpute2"
+_use_fimpute      = config.get("imputer", "beagle") == "fimpute"
+
+_known_imputers = ("beagle", "alphaimpute2", "fimpute")
+if config.get("imputer", "beagle") not in _known_imputers:
+    raise ValueError(
+        f"Unknown imputer: {config.get('imputer')!r}. "
+        f"Use one of {', '.join(_known_imputers)}."
+    )
 
 # Always run plink2 with --dog so non-human chromosome codes (1–38) are
 # accepted. Salmon (29), trout (32), and most livestock fit inside this range,
@@ -78,7 +86,8 @@ def _auto_download(path, url):
 
 
 onstart:
-    if not _use_alphaimpute2:
+    # Only the Beagle path needs the JAR; the other imputers are separate tools.
+    if not (_use_alphaimpute2 or _use_fimpute):
         _auto_download(_beagle_jar, _BEAGLE_URL)
     if _use_ref:
         _auto_download(_conform_jar, _CONFORM_URL)
@@ -87,35 +96,34 @@ onstart:
 # Shared helpers: resolve final imputed VCF path (used by vcf_to_plink)
 # ---------------------------------------------------------------------------
 
-# AlphaImpute2 produces a single genome-wide VCF; Beagle produces per-chrom
-# VCFs that are concatenated. Both land in the same variable so vcf_to_plink
-# needs no conditional logic.
-_final_vcf = (
-    config["output_dir"] + "/alphaimpute2/all_chromosomes.vcf.gz"
-    if _use_alphaimpute2
-    else config["output_dir"] + "/all_chromosomes.vcf.gz"
-)
+# Each imputer writes its final genome-wide VCF to its own path; they all land
+# in this one variable so vcf_to_plink needs no conditional logic.
+# AlphaImpute2 imputes the whole genome at once, while Beagle and FImpute work
+# per chromosome and concatenate.
+if _use_alphaimpute2:
+    _final_vcf = config["output_dir"] + "/alphaimpute2/all_chromosomes.vcf.gz"
+elif _use_fimpute:
+    _final_vcf = config["output_dir"] + "/fimpute/all_chromosomes.vcf.gz"
+else:
+    _final_vcf = config["output_dir"] + "/all_chromosomes.vcf.gz"
 
 # rule all targets differ between imputers
-_rule_all_inputs = (
-    [
+if _use_alphaimpute2 or _use_fimpute:
+    _rule_all_inputs = [
         _final_vcf,
         _final_vcf + ".tbi",
         config["output_dir"] + "/plink_binary/imputed_data.bed",
     ]
-    if _use_alphaimpute2
-    else
-    expand(
+else:
+    _rule_all_inputs = expand(
         "{output_dir}/imputed/chr{chrom}.vcf.gz",
         output_dir=config["output_dir"],
         chrom=get_chroms(),
-    )
-    + [
+    ) + [
         config["output_dir"] + "/all_chromosomes.vcf.gz",
         config["output_dir"] + "/all_chromosomes.vcf.gz.tbi",
         config["output_dir"] + "/plink_binary/imputed_data.bed",
     ]
-)
 
 # ---------------------------------------------------------------------------
 # rule all
@@ -366,3 +374,6 @@ if _use_ref:
 
 if _use_alphaimpute2:
     include: "rules/alphaimpute2.smk"
+
+if _use_fimpute:
+    include: "rules/fimpute.smk"
