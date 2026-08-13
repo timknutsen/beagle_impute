@@ -77,10 +77,35 @@ Snakemake rejects dotted keys in `--config`, so CLI overrides use flat aliases
 
 ### Mode flags (set at parse time in `Snakefile`)
 
-Three boolean flags control which rules and files are included:
+Flags controlling which rules and files are included:
 - `_use_ref` — `reference_vcf` is set → includes `rules/intersect_and_conform.smk` and routes Beagle input through harmonization
 - `_use_bref3` — `bref3_jar` is set → adds a bref3 conversion step before Beagle for faster reference loading
 - `_use_alphaimpute2` — `imputer: "alphaimpute2"` → includes `rules/alphaimpute2.smk` instead of Beagle rules
+- `_use_fimpute` — `imputer: "fimpute"` → includes `rules/fimpute.smk` instead of Beagle rules
+
+`imputer` is validated at parse time; an unknown value raises rather than
+silently falling back to Beagle.
+
+### FImpute mode
+
+`rules/fimpute.smk` runs per chromosome and concatenates, like Beagle. FImpute3
+is a licensed binary that conda does **not** install — it is located via
+`fimpute_params.executable` and the rule that runs it deliberately has no
+`conda:` directive.
+
+Three behaviours share one mechanism, FImpute's chip model:
+- **Sporadic missing calls** are filled whatever the setup (code `5` on input).
+- **Phasing** comes back through the resolved heterozygote codes `3`/`4`, which
+  become `0|1` / `1|0`. Code `1` is a genuinely unresolved het and stays `0/1`.
+- **A reference panel** (`fimpute_params.reference_bfile`) makes the run
+  two-chip: reference = chip 1 (`ref_chip=1`), target = chip 2, and the SNP info
+  table carries one index column per chip with `0` where a chip lacks a marker.
+  Each animal's genotype string covers only its own chip's markers, in that
+  chip's position order — getting that order wrong shifts every call silently.
+
+Note that `save_genotype` and phasing are mutually exclusive: with it set,
+FImpute returns every het as code `1` and the phase is gone. It is therefore
+only written to the control file when `phase_output: false`.
 
 ### Main pipeline DAG (Beagle mode, no reference)
 

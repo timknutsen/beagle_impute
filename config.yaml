@@ -33,10 +33,38 @@ bref3_jar: ""                            # (Optional) Path to bref3.jar for fast
 plink_extra_flags: ""
 
 # --- Imputer selection ---
-# Choose the imputation engine: "beagle" (default) or "alphaimpute2"
+# Choose the imputation engine: "beagle" (default), "alphaimpute2" or "fimpute"
 #   beagle        — population LD-based; requires beagle_jar; good when no pedigree
 #   alphaimpute2  — pedigree + population; good for structured livestock/aquaculture
+#   fimpute       — pedigree + population; requires the FImpute3 binary (see below)
 imputer: "beagle"
+
+# --- FImpute parameters (used when imputer: "fimpute") ---
+# FImpute3 is licensed software and is NOT installed by conda — the binary must
+# already exist on the machine. Point `executable` at it; the path below is the
+# shared install on this cluster.
+# Like AlphaImpute2 it uses the pedigree (sire/dam columns of the .fam), so it
+# suits structured breeding populations. Animals are renumbered 1..N internally
+# because FImpute limits ID length, and mapped back afterwards.
+fimpute_params:
+  executable: "/mnt/efshome/applications/FImpute3/2026/FImpute3"
+  nthreads: 1
+
+  # Optional denser (or simply different) array used as the reference panel.
+  # Leave empty to impute `bfile` on its own — that still fills sporadic missing
+  # calls and phases. Set it to a PLINK prefix to run a real HD→LD imputation:
+  # the reference becomes FImpute's chip 1 (ref_chip=1), `bfile` becomes chip 2,
+  # and the output covers the union of both marker sets.
+  reference_bfile: ""
+
+  # Keep genotypes that were actually measured instead of letting FImpute
+  # revise them (FImpute's `keep_og`).
+  keep_observed: true
+
+  # Emit phased genotypes (0|1 / 1|0) where FImpute resolved the heterozygote.
+  # Setting this false adds `save_genotype` to the control file, which returns
+  # plain 0/1/2/5 calls — and discards the phase along with them.
+  phase_output: true
 
 # --- Beagle parameters ---
 beagle_params:

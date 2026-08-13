@@ -7,6 +7,7 @@ import pytest
 
 from make_accuracy_cv_setup import assign_folds, choose_ld_panel
 from fimpute_io import (
+    build_panel_map,
     _raw_block_to_fimpute_strings,
     _raw_value_to_fimpute,
     fimpute_calls_to_vcf_gt,
@@ -99,12 +100,55 @@ def test_write_fimpute_inputs_from_plink_raw_uses_ggf2_layout(tmp_path):
     assert 'nthread=2;' in outputs["ctrl"].read_text()
 
 
-def test_fimpute_calls_to_vcf_gt_maps_phased_and_missing_codes():
+def test_fimpute_calls_to_vcf_gt_collapses_phase_when_unphased():
     assert fimpute_calls_to_vcf_gt("0") == "0/0"
     assert fimpute_calls_to_vcf_gt("2") == "1/1"
+    # 3 and 4 are FImpute's resolved heterozygotes; both collapse to 0/1 here.
     assert fimpute_calls_to_vcf_gt("3") == "0/1"
-    assert fimpute_calls_to_vcf_gt("4") == "1/0"
+    assert fimpute_calls_to_vcf_gt("4") == "0/1"
     assert fimpute_calls_to_vcf_gt("5") == "./."
+
+
+def test_fimpute_calls_to_vcf_gt_keeps_resolved_phase():
+    """
+    Codes 3 and 4 carry which parental strand holds the reference allele.
+
+    In practice FImpute resolves nearly every heterozygote this way, so writing
+    them with "/" would throw away almost all of the phasing in a run.
+    """
+    assert fimpute_calls_to_vcf_gt("3", phased=True) == "0|1"
+    assert fimpute_calls_to_vcf_gt("4", phased=True) == "1|0"
+    assert fimpute_calls_to_vcf_gt("0", phased=True) == "0|0"
+    assert fimpute_calls_to_vcf_gt("2", phased=True) == "1|1"
+    # Code 1 is a genuinely unresolved het and must stay unphased.
+    assert fimpute_calls_to_vcf_gt("1", phased=True) == "0/1"
+    assert fimpute_calls_to_vcf_gt("5", phased=True) == "./."
+
+
+def test_build_panel_map_indexes_each_chip_separately():
+    """
+    Marker indices are per chip and 0 where a chip lacks the marker.
+
+    The genotype string for an animal must follow its own chip's column, so a
+    wrong index here silently shifts every call on that panel.
+    """
+    hd = pd.DataFrame({
+        "snp": ["s1", "s2", "s3", "s4"],
+        "chrom": [1, 1, 1, 1],
+        "pos": [100, 200, 300, 400],
+    })
+    ld = pd.DataFrame({
+        "snp": ["s1", "s3"],
+        "chrom": [1, 1],
+        "pos": [100, 300],
+    })
+
+    panel_map = build_panel_map([hd, ld])
+
+    assert list(panel_map["SNP_ID"]) == ["s1", "s2", "s3", "s4"]
+    assert list(panel_map["Chip1"]) == [1, 2, 3, 4]
+    # s2 and s4 are absent from the LD panel, so they are 0 there.
+    assert list(panel_map["Chip2"]) == [1, 0, 2, 0]
 
 
 def test_write_fimpute_vcf_keeps_real_sample_ids_and_variant_metadata(tmp_path):
@@ -116,7 +160,7 @@ def test_write_fimpute_vcf_keeps_real_sample_ids_and_variant_metadata(tmp_path):
     imp.write_text("ID\tChip\tCalls...\n1\t1\t03\n2\t1\t25\n")
     out_vcf = tmp_path / "chr1.vcf"
 
-    write_fimpute_vcf(imp, bim, id_map, out_vcf)
+    write_fimpute_vcf(imp, bim, id_map, out_vcf, phased=False)
 
     lines = [line for line in out_vcf.read_text().splitlines() if not line.startswith("##")]
     assert lines[0].split("\t")[-2:] == ["A", "B"]
@@ -124,6 +168,22 @@ def test_write_fimpute_vcf_keeps_real_sample_ids_and_variant_metadata(tmp_path):
         "1", "100", "snp1", "G", "A", ".", "PASS", ".", "GT", "0/0", "1/1"
     ]
     assert lines[2].split("\t")[-2:] == ["0/1", "./."]
+
+
+def test_write_fimpute_vcf_emits_phased_genotypes_by_default(tmp_path):
+    bim = tmp_path / "chr1.bim"
+    bim.write_text("1\tsnp1\t0\t100\tA\tG\n1\tsnp2\t0\t200\tC\tT\n")
+    id_map = tmp_path / "id_map.tsv"
+    id_map.write_text("short_id\tfid\tiid\n1\tF1\tA\n2\tF1\tB\n")
+    imp = tmp_path / "genotypes_imp.txt"
+    imp.write_text("ID\tChip\tCalls...\n1\t1\t34\n2\t1\t25\n")
+    out_vcf = tmp_path / "chr1.vcf"
+
+    write_fimpute_vcf(imp, bim, id_map, out_vcf)
+
+    lines = [line for line in out_vcf.read_text().splitlines() if not line.startswith("##")]
+    assert lines[1].split("\t")[-2:] == ["0|1", "1|1"]
+    assert lines[2].split("\t")[-2:] == ["1|0", "./."]
 
 
 def test_vectorised_fimpute_encoding_matches_the_scalar_mapping():
