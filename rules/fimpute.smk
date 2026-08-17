@@ -213,6 +213,12 @@ rule run_fimpute:
     output:
         imp    = _fim_dir + "/input/chr{chrom}/genotypes_imp.txt",
         report = _fim_dir + "/input/chr{chrom}/report.txt",
+        # FImpute rewrites the SNP map for the markers it actually kept. It
+        # drops some of its own accord -- a marker carried only by the target
+        # chip is logged in excluded_snp_list.txt as "Not On HD" -- so the
+        # input .snps overstates the genotype string by however many it
+        # removed, and the VCF writer must follow this file instead.
+        snpinfo = _fim_dir + "/input/chr{chrom}/snp_info.txt",
     params:
         exe = _fimpute_exe,
     threads:
@@ -236,7 +242,9 @@ rule fimpute_to_vcf:
     input:
         imp   = rules.run_fimpute.output.imp,
         bim   = rules.fimpute_chrom_bfile.output.bim,
-        snps  = rules.fimpute_prepare_inputs.output.snps,
+        # FImpute's own post-run map, not the one we handed it -- see the note
+        # on run_fimpute.output.snpinfo.
+        snps  = rules.run_fimpute.output.snpinfo,
         idmap = rules.fimpute_prepare_inputs.output.idmap,
         refbim = (
             _fim_dir + "/ref/chr{chrom}.bim" if _fim_use_ref else []

@@ -56,6 +56,56 @@ def _raw_block_to_fimpute_strings(block: pd.DataFrame) -> list[str]:
     ]
 
 
+def drop_duplicate_positions(bims: list[pd.DataFrame]) -> list[pd.DataFrame]:
+    """
+    Keep one marker per physical position, consistently across every panel.
+
+    FImpute refuses a SNP info table that lists two markers at the same
+    coordinate ("Error - SNPs with the same physical position found"), and real
+    arrays do carry them: probes that were redesigned keep both IDs. The Beagle
+    path handles this with `bcftools norm -d snps`; this is the equivalent for
+    the FImpute path.
+
+    Deduplicating each panel on its own is not enough — the reference could keep
+    marker A at a position where the target kept marker B, and the union would
+    collide again. One winner is chosen per (chrom, pos) across the pooled
+    panels, by lowest SNP ID so the choice is deterministic, and every panel is
+    filtered to that set.
+    """
+    pooled = pd.concat([bim[["snp", "chrom", "pos"]] for bim in bims])
+    winners = (
+        pooled.sort_values("snp")
+        .drop_duplicates(subset=["chrom", "pos"], keep="first")["snp"]
+        .astype(str)
+    )
+    keep = set(winners)
+    return [bim[bim["snp"].astype(str).isin(keep)].copy() for bim in bims]
+
+
+def assign_sex_from_role(ped: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fill an unknown sex from how the animal is used in the pedigree.
+
+    PLINK .fam files written by our exports carry 0 in the sex column, so every
+    animal reaches FImpute as 'U'. FImpute then infers sex itself and rejects
+    the result — "X appeard as both sire and dam / Error - Sex conflict is
+    detected in the pedigree" — even when no ID actually occupies both columns.
+    Stating the sex explicitly avoids the inference entirely; verified against
+    FImpute3 on a pedigree it had just refused.
+
+    An animal used as a sire is M, as a dam is F, and one that is nobody's
+    parent stays U, which FImpute accepts.
+    """
+    sires = set(ped["sire ID"].astype(str)) - {"0"}
+    dams = set(ped["dam ID"].astype(str)) - {"0"}
+    ped = ped.copy()
+    ped["sex"] = [
+        sex if sex != "U" else ("M" if str(i) in sires else "F" if str(i) in dams else "U")
+        for i, sex in zip(ped["ID"], ped["sex"])
+    ]
+    return ped
+
+
 def build_panel_map(bims: list[pd.DataFrame]) -> pd.DataFrame:
     """
     Merge one .bim per chip into FImpute's SNP info table.
@@ -94,17 +144,36 @@ def _panel_genotype_strings(raw: pd.DataFrame, bim: pd.DataFrame) -> list[str]:
     # .raw columns are "<snp>_<allele>", so match on the leading SNP id.
     geno_cols = list(raw.columns[6:])
     by_snp = {col.rsplit("_", 1)[0]: col for col in geno_cols}
-    ordered = [
-        by_snp[snp]
-        for snp in bim.sort_values("pos")["snp"].astype(str)
-        if snp in by_snp
+    ordered_snps = [
+        snp for snp in bim.sort_values("pos")["snp"].astype(str) if snp in by_snp
     ]
+    ordered = [by_snp[snp] for snp in ordered_snps]
     if len(ordered) != len(bim):
         raise ValueError(
             f"RAW carries {len(ordered)} of the panel's {len(bim)} markers; "
             "the .raw and .bim do not describe the same panel"
         )
-    return _raw_block_to_fimpute_strings(raw[ordered])
+
+    # Which allele --export A counted is NOT fixed: the suffix on each .raw
+    # column names it, and on our exports it is a2 for every marker, not the a1
+    # the rest of this module assumes. Left uncorrected the genotypes reach the
+    # VCF mirrored -- 0/0 written as 1|1 and back -- which allelic R² cannot
+    # see, because squaring a correlation hides the sign. It shows up only as a
+    # collapsed concordance (0.41 against Beagle's 0.98 on the same data).
+    #
+    # Normalise here so the FImpute codes always count a1, matching REF=a2 /
+    # ALT=a1 in write_fimpute_vcf. Heterozygotes are unaffected by the flip.
+    a1_of = dict(zip(bim["snp"].astype(str), bim["a1"].astype(str)))
+    flip = [
+        col for col, snp in zip(ordered, ordered_snps)
+        if col.rsplit("_", 1)[1] != a1_of[snp]
+    ]
+
+    block = raw[ordered]
+    if flip:
+        block = block.copy()
+        block[flip] = 2 - block[flip]
+    return _raw_block_to_fimpute_strings(block)
 
 
 def write_fimpute_inputs_from_raw(
@@ -166,6 +235,13 @@ def write_fimpute_inputs_from_raw(
     else:
         ref_raw = ref_bim = ref_fam = None
 
+    # Markers sharing a physical position have to go before anything is indexed
+    # against the .bim, so the panel map and the genotype strings agree.
+    if use_reference:
+        ref_bim, bim = drop_duplicate_positions([ref_bim, bim])
+    else:
+        (bim,) = drop_duplicate_positions([bim])
+
     # Chip 1 is the reference when one is supplied, so it is listed first and
     # named as ref_chip below. Animal order follows the same convention.
     if use_reference:
@@ -176,6 +252,23 @@ def write_fimpute_inputs_from_raw(
     short_ids = {iid: str(idx + 1) for idx, iid in enumerate(all_fam["iid"].astype(str))}
     id_map = all_fam[["fid", "iid"]].copy()
     id_map.insert(0, "short_id", [short_ids[iid] for iid in all_fam["iid"].astype(str)])
+
+    # Parents that are not themselves genotyped still belong in the pedigree.
+    # Dropping them to 0 -- which is what mapping straight through short_ids
+    # does -- severs the link between full sibs whose parents were never typed
+    # on these arrays. On step 1 that left only 1,706 of 6,299 animals with any
+    # parent at all, because the reference panel is the *later* year classes
+    # (2017-2019) rather than the cohort's parents, so almost no parent is in
+    # the run. AlphaImpute2 adds these ancestors itself; FImpute needs them
+    # spelled out, and accepts pedigree rows for animals absent from the
+    # genotype file.
+    genotyped = set(all_fam["iid"].astype(str))
+    ancestors: list[str] = []
+    for column in ("pat", "mat"):
+        for value in all_fam[column].astype(str):
+            if value != "0" and value not in genotyped and value not in short_ids:
+                short_ids[value] = str(len(short_ids) + 1)
+                ancestors.append(value)
 
     if use_reference:
         snps = build_panel_map([ref_bim, bim])
@@ -205,12 +298,27 @@ def write_fimpute_inputs_from_raw(
     parent_to_short = lambda value: short_ids.get(str(value), "0")
     ped = pd.DataFrame(
         {
-            "ID": [short_ids[iid] for iid in all_fam["iid"].astype(str)],
-            "sire ID": [parent_to_short(value) for value in all_fam["pat"]],
-            "dam ID": [parent_to_short(value) for value in all_fam["mat"]],
-            "sex": [_sex_to_fimpute(value) for value in all_fam["sex"]],
+            "ID": (
+                [short_ids[iid] for iid in all_fam["iid"].astype(str)]
+                + [short_ids[a] for a in ancestors]
+            ),
+            # Ancestors carry no parents of their own here: the GPA pedigree
+            # reaches one generation up from the genotyped animals.
+            "sire ID": (
+                [parent_to_short(value) for value in all_fam["pat"]]
+                + ["0"] * len(ancestors)
+            ),
+            "dam ID": (
+                [parent_to_short(value) for value in all_fam["mat"]]
+                + ["0"] * len(ancestors)
+            ),
+            "sex": (
+                [_sex_to_fimpute(value) for value in all_fam["sex"]]
+                + ["U"] * len(ancestors)
+            ),
         }
     )
+    ped = assign_sex_from_role(ped)
 
     genos_path = out_dir / f"chr{chrom}.genos"
     snps_path = out_dir / f"chr{chrom}.snps"
@@ -335,7 +443,19 @@ def write_fimpute_vcf(
 
     if snp_info_path is not None:
         snp_info = pd.read_csv(snp_info_path, sep="\t")
-        order = snp_info["SNP_ID"].astype(str).tolist()
+        # Two shapes reach this: the map we write for FImpute (SNP_ID/Chr/Pos)
+        # and the one FImpute writes back after dropping the markers it refused
+        # (SNPID/Chr/BPPos). The latter is authoritative for the genotype
+        # strings, so both column spellings have to be readable.
+        id_col = next(
+            (c for c in ("SNP_ID", "SNPID") if c in snp_info.columns), None
+        )
+        if id_col is None:
+            raise ValueError(
+                f"{snp_info_path} has no SNP_ID or SNPID column; "
+                f"found {list(snp_info.columns)}"
+            )
+        order = snp_info[id_col].astype(str).tolist()
     else:
         order = bims[0]["snp"].astype(str).tolist()
 
@@ -366,7 +486,20 @@ def write_fimpute_vcf(
             out.write("\t" + "\t".join(samples))
         out.write("\n")
 
-        for idx, snp in enumerate(order):
+        # The genotype string is indexed by the SNP map's own order, but that
+        # order is not necessarily sorted by position -- FImpute's post-run
+        # snp_info.txt is not, and tabix refuses an unsorted VCF
+        # ("Unsorted positions on sequence #1"). Carry the original index along
+        # so the string stays correctly indexed while the records come out in
+        # coordinate order.
+        emit = sorted(
+            enumerate(order),
+            key=lambda pair: (
+                str(alleles.loc[pair[1], "chrom"]),
+                int(alleles.loc[pair[1], "pos"]),
+            ),
+        )
+        for idx, snp in emit:
             row = alleles.loc[snp]
             gts = [
                 fimpute_calls_to_vcf_gt(call_string[idx], phased=phased)

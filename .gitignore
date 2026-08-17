@@ -19,3 +19,7 @@ slurm-*.out
 
 # Auto-downloaded tool JARs
 bin/
+
+# aqg_db2plink leftovers when run from the repo root
+TIMES
+PLINK[0-9]*/

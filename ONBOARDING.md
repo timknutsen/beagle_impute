@@ -1,143 +1,117 @@
 # Onboarding — beagle_impute
 
-You are taking over an in-progress session on this repo. Read `AGENTS.md`
-(symlinked to `CLAUDE.md`) for the durable architecture + conventions. This
-file is the *live* state at handover — what's running, what's broken, what
-the next move is.
+Read `AGENTS.md` (symlink to `CLAUDE.md`) for durable architecture and
+conventions. This file is the live state at handover: what works, what does
+not, and where the bodies are buried.
 
-## Live state at handover (2026-05-22, updated)
+**Handover date:** 2026-08-16
+**Branch:** `fix/fimpute-real-data-invariants` (1 commit ahead of `master`,
+not pushed)
 
-- Working dir: `/mnt/efshome/aquagen/code/timknu/workflows/beagle_impute`
-- Branch: `master`
-- Backup tag: `backup/pre-rebase-2026-05-22` — created before today's
-  rebase, safe to delete once you trust the master tip.
-- Last commit: `82d5868` "Route heavy rules to size-appropriate SLURM partitions"
+---
 
-### Phase 2 run: `runs/RT24_noref/`
+## What works
 
-Dataset: `/mnt/efshome/aquagen/projects/AG_global_breeding/Rainbowtrout/RT24/plink/RT24_fish`
-(25,300 animals × 55,737 SNPs across 32 chromosomes, no reference panel).
+All three imputers run end to end from a PLINK bfile, a pedigree in `.fam`
+columns 3–4, and a reference panel:
 
-Original handover state said the Beagle step was blocked by grouped SLURM memory
-requests. The practical fix was to run Beagle with one chromosome per group
-component and a real runtime in minutes:
+| Imputer | Reference panel | Pedigree | Parallelism |
+|---|---|---|---|
+| Beagle 5.5 | `reference_vcf`, must be phased | ignores it | per chromosome |
+| FImpute3 | `fimpute_params.reference_bfile` → chip 1 | uses it | per chromosome |
+| AlphaImpute2 | merge into the input bfile yourself | uses it | whole genome, one thread |
 
-```bash
-snakemake --use-conda --cores 48 --executor slurm --jobs 35 \
-    --group-components beagle=1 \
-    --default-resources runtime=14400 \
-    --rerun-incomplete \
-    --config bfile=/mnt/efshome/aquagen/projects/AG_global_breeding/Rainbowtrout/RT24/plink/RT24_fish \
-             output_dir=runs/RT24_noref
-```
+`imputer:` selects the engine and is validated at parse time. 51 tests pass;
+all three DAGs dry-run clean.
 
-Important Snakemake details verified against current docs:
+The FImpute path was **not** usable against real two-chip data until the commit
+on this branch. Six separate defects each aborted the whole run. They are listed
+in the commit message and the invariants are now documented in `CLAUDE.md`
+under "What FImpute demands of its inputs". Do not weaken those checks — every
+one of them corresponds to a run that failed.
 
-- `mem_mb` is total job memory.
-- Group jobs aggregate resources across grouped components.
-- `--group-components` targets group names. The old `intersect=5 conform=5`
-  examples are ineffective unless those rules have `group:` declarations.
-- Runtime values are in minutes for the SLURM executor path; `runtime=240`
-  timed out as 4 minutes, while `runtime=14400` requested 240 minutes.
+## What does not work
 
-Progress observed during this session:
+**`cross_array` accuracy mode is broken.** It hands Beagle the LD fileset with
+no reference panel, so the HD-only markers are absent from the input and there
+is nothing to impute. It has never produced a valid number. `kfold_mask_and_impute`
+already has the missing piece (`acc_cv_make_reference_bfile`); porting it is the
+smallest fix.
 
-| Rule | Done |
-|------|------|
-| `make_per_chrom_vcf` | 32/32 (intermediates were `temp()`, only 11 .vcf.gz left on disk) |
-| `normalize_vcf` | 32/32 |
-| `run_beagle` | relaunched as one chromosome per grouped job; check current disk/SLURM state before reporting |
-| `concat_chromosomes` | check current DAG state |
-| `vcf_to_plink` | check current DAG state |
+**No identity gate.** Nothing verifies that an animal's LD and HD genotypes came
+from the same physical sample. On the salmon benchmark this silently ruined a
+whole step — see below.
 
-### AlphaImpute2 and accuracy developments
+**The test fixtures cannot catch these bugs.** `tests/conftest.py` builds 12
+animals × 80 SNPs with no duplicate positions, no two-chip setup, and — the
+important part — it encodes the *same wrong assumption* the production code had
+about which allele `plink2 --export A` counts. Fixture and code agreed with each
+other and both disagreed with reality, which is why 51 green tests coexisted with
+a module that could not complete a single real run. One fixture with a duplicate
+position, a two-chip layout, and a `.raw` whose counted allele is a2 would have
+caught three of the six defects.
 
-AlphaImpute2 now has a working real-data smoke/accuracy path.
+## The work that lives outside this repo
 
-Real test completed under `/tmp/ai2_accuracy_1000`:
+`/mnt/efshome/aquagen/projects/stepwise_imputation_50k_70k/` holds ~17 scripts
+that do everything between "a database" and "a bfile the pipeline can eat":
 
-- Input: first 1000 RT24 samples, full 55,737 SNPs.
-- Validation: 200 animals masked to 10,000 sampled SNPs.
-- Reference: 800 animals left full density.
-- Accuracy target: 10k to full density.
+cohort and ancestor resolution from genodb + GPA, pedigree construction with the
+four FImpute invariants, reference-panel assembly, cross-array dataset matching,
+per-array export with duplicate-cluster handling, and the identity gate
+(`verify_identity.sh`).
 
-Key bugs fixed:
+**Every one of them hardcodes that project path.** The logic is general; the form
+is not. This is the single biggest obstacle to the repo being a reusable tool,
+and it is where all six FImpute bugs and the identity problem were actually
+found. Moving them into `scripts/` with the base path as an argument is the
+highest-value refactor available.
 
-- Accuracy PLINK rules now activate `envs/workflow_env.yaml`.
-- Accuracy workflow prepends `--dog` like the main Snakefile.
-- AlphaImpute2 PLINK export now activates `envs/workflow_env.yaml`.
-- AlphaImpute2 mask-and-impute no longer uses PLINK2 non-concatenating
-  `--pmerge`/old `--bmerge`. It uses `scripts/mask_validation_genotypes.py`
-  to keep reference animals full density and set validation non-LD genotypes
-  to missing in-place.
-- Accuracy AlphaImpute2 now runs chromosome-wise and concatenates VCFs.
-- `alphaimpute2_params.maxthreads` defaults to 1. AlphaImpute2 0.0.3
-  segfaulted with `maxthreads=2` on RT24 chr5; `maxthreads=1` completed.
-- `scripts/alphaimpute2_to_vcf.py` emits `##contig` lines for bcftools concat.
-- AlphaImpute2 genotype code orientation is reversed relative to the earlier
-  converter assumption: `0 -> 1/1`, `1 -> 0/1`, `2 -> 0/0`, `9 -> ./.`.
-  Without this, allelic r2 remains high but concordance is artificially low.
+## Live state of the salmon benchmark
 
-Evidence:
+Stepwise 50K → 70Kv1 → v2 → v3 → v4, three imputers, accuracy and speed.
+Working dir as above; see its `README.md` for the full write-up.
 
-- Before orientation fix, mean concordance was 0.35575992.
-- Diagnostic flipped-dose concordance was 0.99182510.
-- Signed r was negative for 97.0% of SNPs, proving the dosage flip.
-- See `reports/alphaimpute2_concordance_investigation.md`.
+Step 1 (50K → 70Kv1), 1,457 fish, 9,466 markers scored, 5,790-animal panel:
 
-### Things I changed this session that are easy to miss
+| Imputer | mean R² | concordance | node-minutes |
+|---|---:|---:|---:|
+| Beagle 5.5 | 0.955 | 0.981 | 38 |
+| FImpute3 | 0.924 | 0.970 | 7 |
+| AlphaImpute2 | pending | pending | ~716 |
 
-- `plink_extra_flags` gets `--dog ` prepended at parse time (Snakefile
-  line ~33). Every plink2 rule inherits it. **Don't add `--chr-set` or
-  `--cow`/`--horse`/etc. anywhere else.** This unblocks any species with
-  chromosome codes ≤ 38.
-- All rule outputs now route under `${output_dir}` (incl. plink_binary).
-- Beagle JAR auto-downloader bumped to `beagle.27Feb25.75f.jar` (5.5).
-  Old `beagle.17Dec24.jar` URL 404s.
-- `runs/` is in `.gitignore`.
-- `Snakefile_accuracy` now inherits the `--dog` convention too.
-- AlphaImpute2 accuracy is chromosome-wise; do not revert to one genome-wide
-  AlphaImpute2 call unless the segfault is resolved upstream.
+Beagle leads on accuracy; FImpute costs ~6× less compute for ~2 points of R².
+AlphaImpute2 was still running at handover (job 415, ~12 h, on the ancestor
+panel) and is not competitive on either axis.
 
-### Commands you'll need
+**Two results worth carrying forward:**
 
-```bash
-# Resume the run (Snakemake re-uses normalize_vcf outputs already on disk).
-snakemake --use-conda --cores 48 --executor slurm --jobs 35 \
-    --group-components beagle=1 \
-    --default-resources runtime=14400 \
-    --rerun-incomplete \
-    --config bfile=/mnt/efshome/aquagen/projects/AG_global_breeding/Rainbowtrout/RT24/plink/RT24_fish \
-             output_dir=runs/RT24_noref
+*Ancestors in the panel help Beagle and hurt FImpute.* Adding 948 genotyped
+ancestors moved Beagle +0.0013 and FImpute −0.0064. Pedigree depth made no
+difference at all (0.9246 one generation vs 0.9244 two), so the effect is the
+panel's composition, not the pedigree. Hypothesis, untested: Beagle's HMM gains
+from more haplotype diversity while FImpute's long-block matching is diluted by it.
 
-# Watch
-tail -f runs/RT24_noref/_logs/snakemake.log
-squeue -u $USER
-sacct -X -S "07:00:00" -u $USER -o JobID,JobName%20,State,Elapsed
-ls runs/RT24_noref/imputed/   # imputed VCFs appear here
+*Step 2 is not a result, it is a data problem.* It scored mean R² 0.53 because
+**974 of its 3,881 animals (25%) have LD and HD genotypes from different
+physical fish**. The distribution is sharply bimodal at 0.4–0.6 versus 0.9–1.0.
+Steps 1 and 3 have 10 and 72 such animals. Any conclusion from step 2 before
+those animals are removed is worthless.
 
-# AlphaImpute2 real accuracy smoke test config used in this session:
-snakemake --snakefile Snakefile_accuracy --directory /tmp/ai2_accuracy_1000 \
-    --use-conda --conda-prefix /tmp/ai2_smoke/.snakemake/conda \
-    --cores 4 --rerun-incomplete
-```
+Steps 2–3 have ancestor panels built and Beagle/FImpute scored (step 2 invalid
+per above). **Step 4 cannot be run in this design at all**: only one Ssa70kv4
+fish exists outside the cohort, because each array version was used for one
+period and an animal's parents were therefore typed on the *previous* array. It
+needs a held-out-fold reference or it stays out.
 
-### After Phase 2 finishes
+## Suggested direction for the next session
 
-Phase 3 is queued in conversation history but not yet started:
-imputation **with reference** on `issue_191_trout_parent_control` using the
-**Latemat 2023** phased reference VCF, then accuracy evaluation via
-`Snakefile_accuracy`. Dataset paths are in
-`~/.claude/projects/-mnt-efshome-aquagen-code-timknu-workflows-beagle-impute/memory/reference_data.md`.
-
-### Things I would clean up if I had more time
-
-- Every rule emits "No wall time information given" — add
-  `--default-resources runtime=240` to the snakemake invocation, or
-  `resources: runtime=...` per rule.
-- `make_per_chrom_vcf` / `normalize_vcf` have no `mem_mb` declared; they
-  worked on `r6i-ondemand-large` (15 GiB) for 25k animals, but a real
-  number would be cleaner.
-- The 200+ failed jobs from earlier (`sacct` shows them) are from the
-  pre-`--dog` and pre-partition launches. Ignore them; they're not the
-  current run.
+1. Fix `cross_array` — it is the mode this benchmark actually needs.
+2. Add the identity gate as a required step of any cross-array mode, not an
+   optional check.
+3. Move the dataset-preparation scripts into `scripts/` and parameterise the
+   base path.
+4. Rebuild the fixtures around the failure modes above.
+5. Decide whether AlphaImpute2 stays in the benchmark; at ~12 h per step against
+   FImpute's 7 minutes it costs two days of wall time for a result that loses on
+   both axes.
