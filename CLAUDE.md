@@ -54,8 +54,25 @@ Reads `config.yaml` + `config_accuracy.yaml`. Set `accuracy_mode` to one of:
 | Mode | What it does |
 |------|--------------|
 | `mask_and_impute` | Hold out one validation set, mask it to LD density, impute, compare to truth |
-| `cross_array` | Same animals on two arrays — impute from LD array, compare to HD truth |
+| `cross_array` | **Broken — do not use as-is.** See below |
 | `kfold_mask_and_impute` | Animal-level K-fold CV against a shared LD panel; can benchmark Beagle vs AlphaImpute2 vs FImpute in one run |
+
+**`cross_array` has no reference panel.** The mode feeds Beagle the LD fileset
+alone, so the HD-only markers are not in the input VCF and there is nothing to
+impute or score. `kfold_mask_and_impute` already builds a panel per fold
+(`acc_cv_make_reference_bfile`); `cross_array` needs the same before it is
+usable. The 2026-08 salmon benchmark worked around this with external scripts
+rather than fixing the rule.
+
+**A cross-array step must verify identity before it scores anything.** Pairing an
+animal's LD and HD genotypes on `individ_id` assumes both typings came from one
+animal. When an ID covers two physical samples the pair is two unrelated fish,
+and the step scores an imputation that never had a chance. Concordance between
+LD and HD at their shared markers separates the two cases cleanly — the same
+animal lands at 0.95–1.0, two different salmon near 0.5, nothing in between. On
+the 2026-08 benchmark this caught 974 of 3,881 animals (25%) in one step, which
+had scored mean R² 0.53 purely because a quarter of its truth was a different
+fish.
 
 **All three modes score imputed markers only.** The truth bfile is built with
 `--exclude` on the LD panel, because those markers are handed to the imputer as
@@ -106,6 +123,35 @@ Three behaviours share one mechanism, FImpute's chip model:
 Note that `save_genotype` and phasing are mutually exclusive: with it set,
 FImpute returns every het as code `1` and the phase is gone. It is therefore
 only written to the control file when `phase_output: false`.
+
+#### What FImpute demands of its inputs
+
+FImpute validates hard and aborts the entire run rather than skipping a bad
+record, so every one of these has to hold before it will start. All are
+enforced in `scripts/fimpute_io.py`; do not weaken them.
+
+| Requirement | What happens otherwise | Where enforced |
+|---|---|---|
+| Sex stated, not `U` | Infers sex itself, then rejects its own inference: `X appeard as both sire and dam` | `assign_sex_from_role()` |
+| No parent in both the sire and dam column | Same error | pedigree build, upstream |
+| No ancestry cycles | `Pedigree loop is detected!` | pedigree build, upstream |
+| One marker per physical position, across **all** panels jointly | `SNPs with the same physical position found` | `drop_duplicate_positions()` |
+
+Two more traps that fail silently rather than loudly:
+
+- **`plink2 --export A` does not necessarily count a1.** On our exports it
+  counts a2 for every marker. The `.raw` column suffix (`<snp>_<allele>`) names
+  which allele was counted — read it, never assume. Getting this wrong mirrors
+  every genotype, and **allelic R² cannot see it** because squaring the
+  correlation hides the sign; only concordance collapses.
+- **FImpute drops markers of its own accord** (a target-only marker is logged in
+  `excluded_snp_list.txt` as `Not On HD`) and rewrites the SNP map in its output
+  folder. Read back *that* map, not the one you supplied, or the genotype string
+  and the map disagree by however many it removed.
+
+Ungenotyped parents belong in the pedigree with their own rows. Mapping them to
+`0` severs full-sib links whenever the parents were not typed in the same run,
+which is the normal case when the reference panel is a different generation.
 
 ### Main pipeline DAG (Beagle mode, no reference)
 
