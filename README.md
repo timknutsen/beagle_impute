@@ -1,21 +1,25 @@
 # Chromosome-wise Imputation Pipeline
 
-This pipeline converts PLINK files to VCF per chromosome, optionally harmonizes against a reference VCF, and imputes with Beagle 5.5.
+This pipeline imputes chromosome-wise PLINK data with Beagle 5.5, FImpute3, or
+AlphaImpute2. Beagle accepts a phased VCF reference; FImpute accepts a PLINK
+reference panel; both engines also run without an external reference.
 
 ## 1. Requirements
 
 - **Conda** and **Snakemake** installed
-- **PLINK2** and **Beagle 5.5 JAR** (see paths in `config.yaml`)
+- **PLINK2**, plus the selected engine: Beagle 5.5 JAR, licensed FImpute3
+  binary, or AlphaImpute2 (see paths in `config.yaml`)
 - Everything else (bcftools, pandas, Java) is installed automatically via `envs/workflow_env.yaml`
 
 ## 2. Choosing an Imputer
 
-The pipeline supports two imputation engines. Set `imputer` in `config.yaml`:
+The pipeline supports three imputation engines. Set `imputer` in `config.yaml`:
 
 | Setting | Engine | Best for |
 |---------|--------|----------|
 | `imputer: "beagle"` (default) | Beagle 5.5 | LD-based imputation; no pedigree needed |
 | `imputer: "alphaimpute2"` | AlphaImpute2 | Pedigree + population; structured livestock/aquaculture |
+| `imputer: "fimpute"` | FImpute3 | Fast pedigree + population imputation; licensed binary required |
 
 AlphaImpute2 is installed automatically via pip inside `envs/alphaimpute2_env.yaml` — no JAR file needed. It requires Python 3.10 (3.12 and 3.14 are incompatible).
 
@@ -49,7 +53,10 @@ beagle_params:
   nthreads: 4      # Beagle threads — match to your CPU/cluster allocation
 ```
 
-For AlphaImpute2 mode, replace `beagle_jar` with the `alphaimpute2_params` block (see `config.yaml` comments) and set `imputer: "alphaimpute2"`. The `beagle_jar`, `conform_gt_jar`, and `bref3_jar` fields are ignored in this mode.
+For AlphaImpute2 mode, use `alphaimpute2_params`; for FImpute, use
+`fimpute_params` and set `reference_bfile` to a PLINK prefix or leave it empty.
+`reference_vcf` is Beagle-only, and `fimpute_params.reference_bfile` is
+FImpute-only: stale settings for another engine are ignored.
 
 You can also override individual values on the command line without editing the file:
 
@@ -105,6 +112,12 @@ snakemake --use-conda \
 - Final PLINK files: `plink_binary/imputed_data.bed/.bim/.fam`
 - Intermediate AlphaImpute2 files: `vcf_output/alphaimpute2_input/` and `vcf_output/alphaimpute2_output/`
 - Logs: `logs/`
+
+**FImpute mode outputs** (`imputer: "fimpute"`):
+- Genome-wide imputed VCF + index: `vcf_output/fimpute/all_chromosomes.vcf.gz` (+ `.tbi`)
+- Final PLINK files: `vcf_output/plink_binary/imputed_data.bed/.bim/.fam`
+- With `fimpute_params.reference_bfile`, the final files contain target
+  (`bfile`) animals only; reference-chip animals are not output samples.
 
 ## 6. Accuracy Evaluation
 
@@ -320,7 +333,7 @@ pip install pytest && pytest
 |-----------|---------------|----------------------|
 | `test_convert.py` (pure-Python group) | `GT_MAP` encoding, `read_bim`, `read_ai2_genotypes`, pedigree column format, genotype roundtrip against fixture matrix | None |
 | `test_convert.py` (`TestConvertRoundtrip`) | Full `convert()` call: bgzipped VCF content, REF/ALT allele direction, GT strings, tabix index creation, mismatch error | `bgzip`, `tabix` (htslib) |
-| `test_dryrun.py` | Snakemake DAG validation for Beagle (no ref), Beagle (with ref), and AlphaImpute2 modes — confirms rules resolve without executing anything | `snakemake` |
+| `test_dryrun.py` | Snakemake DAG validation for Beagle and FImpute, each with/without a reference, plus AlphaImpute2; also checks engine isolation | `snakemake` |
 | `test_accuracy_cv.py` | Ten-fold CV setup, FImpute I/O helpers, CV aggregation, and CV Snakemake dry-run | `snakemake` for dry-run only |
 | `test_cross_array.py` | Cross-array pairing, the shared marker panel, the identity gate, allele orientation, the LD splice, marker reliability, and the `cross_array` dry-run | `snakemake` for dry-run only |
 
@@ -349,13 +362,19 @@ This pedigree structure allows meaningful tests of both the genotype encoding lo
 AlphaImpute2 processes all chromosomes in a single run (unlike Beagle, which is run per chromosome). The pipeline therefore produces a single genome-wide VCF rather than per-chromosome files in this mode.
 
 ### Reference panel behaviour
-When `reference_vcf` is set, the pipeline runs:
+
+For Beagle, `reference_vcf` must be phased and complete. The pipeline runs:
 1. `bcftools isec` — splits target markers into two groups: those **in the reference** and those **only in the target**
 2. `conform-gt` — harmonises strand/allele order of the intersection to match the reference
 3. `Beagle` with `ref=` — phases and imputes only the intersection markers (Beagle drops target-only markers by design)
 4. **Merge** — target-only markers are merged back with the Beagle output so the final VCF contains all original chip markers plus any markers imputed from the reference
 
 This means you can use a reference panel to improve phasing and imputation of overlapping markers without losing any of your original chip data.
+
+For FImpute, `fimpute_params.reference_bfile` activates a two-chip run:
+reference is chip 1 and target `bfile` is chip 2. The final VCF/PLINK contains
+only target animals. Leave the setting empty for one-chip phasing and sporadic
+missing-call fill.
 
 ### bref3: faster reference loading
 Setting `bref3_jar` causes the pipeline to convert the reference VCF to bref3 binary format before running Beagle. This conversion runs once; subsequent per-chromosome Beagle jobs load it 3–43× faster depending on reference panel size. The `bref3.jar` file is available on the same download page as the Beagle JAR.
@@ -367,7 +386,7 @@ Setting `bref3_jar` causes the pipeline to convert the reference VCF to bref3 bi
 
 ## Project Structure
 
-- **Snakefile**: Main imputation workflow (Beagle/AlphaImpute2)
+- **Snakefile**: Main imputation workflow (Beagle/FImpute/AlphaImpute2)
 - **Snakefile_accuracy**: Imputation accuracy evaluation workflow
 - **config.yaml**: Main pipeline configuration
 - **config_accuracy.yaml**: Accuracy evaluation configuration
@@ -379,8 +398,8 @@ Setting `bref3_jar` causes the pipeline to convert the reference VCF to bref3 bi
 ## Workflows
 
 ### 1. Imputation Pipeline
-- Converts PLINK to VCF, harmonizes (optional), imputes with Beagle or AlphaImpute2
-- Select imputer in `config.yaml` (`beagle` or `alphaimpute2`)
+- Converts PLINK data and imputes with Beagle, FImpute, or AlphaImpute2
+- Select imputer in `config.yaml` (`beagle`, `fimpute`, or `alphaimpute2`)
 - Modular rules: per-chromosome, reference panel, and imputer-specific logic
 
 ### 2. Accuracy Evaluation

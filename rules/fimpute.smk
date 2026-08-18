@@ -262,6 +262,10 @@ rule fimpute_to_vcf:
             + ([input.refbim] if isinstance(input.refbim, str) else list(input.refbim))
         ),
         unphased = "" if _fim_phased else "--unphased",
+        # A two-chip run writes reference and target animals. The main
+        # pipeline returns the imputed target bfile only; chip 1 is reference,
+        # chip 2 is target. A one-chip run keeps every chip-1 animal.
+        target_chip = "--target-chip 2" if _fim_use_ref else "",
     conda:
         "../envs/workflow_env.yaml"
     log:
@@ -273,6 +277,7 @@ rule fimpute_to_vcf:
             --bim {params.bims} \
             --snp-info {input.snps} \
             --id-map {input.idmap} \
+            {params.target_chip} \
             {params.unphased} \
             --out-vcf {output.vcf}.tmp
 

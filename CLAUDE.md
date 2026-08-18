@@ -11,7 +11,10 @@ recorded.
 
 ## What this pipeline does
 
-Chromosome-wise genotype imputation pipeline. Converts PLINK binary files to per-chromosome VCFs, optionally harmonizes against a phased reference panel, imputes with **Beagle 5.5** or **AlphaImpute2**, and outputs a merged VCF + PLINK binary.
+Chromosome-wise genotype imputation pipeline. Converts PLINK binary files to
+per-chromosome VCFs, optionally uses an engine-specific reference panel,
+imputes with **Beagle 5.5**, **FImpute3**, or **AlphaImpute2**, and outputs a
+merged VCF + PLINK binary.
 
 ## Running the pipeline
 
@@ -254,13 +257,29 @@ exclusions, counts). A bref3 blob carries no provenance of its own.
 ### Mode flags (set at parse time in `Snakefile`)
 
 Flags controlling which rules and files are included:
-- `_use_ref` — `reference_vcf` is set → includes `rules/intersect_and_conform.smk` and routes Beagle input through harmonization
+- `_use_ref` — the imputer is Beagle **and** `reference_vcf` is set → includes `rules/intersect_and_conform.smk` and routes Beagle input through harmonization
 - `_use_bref3` — `bref3_jar` is set → adds a bref3 conversion step before Beagle for faster reference loading
 - `_use_alphaimpute2` — `imputer: "alphaimpute2"` → includes `rules/alphaimpute2.smk` instead of Beagle rules
 - `_use_fimpute` — `imputer: "fimpute"` → includes `rules/fimpute.smk` instead of Beagle rules
 
 `imputer` is validated at parse time; an unknown value raises rather than
 silently falling back to Beagle.
+
+### Main-pipeline reference contract
+
+The two reference settings are intentionally engine-specific. A stale setting
+for another engine must not alter the selected DAG.
+
+| Engine | Without reference | With reference | Reference setting |
+|---|---|---|---|
+| Beagle | target-only phasing and sporadic fill | harmonise against phased VCF, impute reference markers, merge target-only markers back | `reference_vcf` |
+| FImpute | one-chip phasing and sporadic fill | two-chip run: reference chip 1, target chip 2 | `fimpute_params.reference_bfile` |
+| AlphaImpute2 | its normal pedigree/population path | no external-reference mode in the main pipeline | none |
+
+In FImpute reference mode the reference animals are computational inputs, not
+output samples. `fimpute_to_vcf` selects chip 2, so the final VCF and PLINK
+files contain only animals from `bfile`, over the usable marker union. In
+one-chip mode every animal in `bfile` is retained.
 
 ### FImpute mode
 
@@ -278,6 +297,9 @@ Three behaviours share one mechanism, FImpute's chip model:
   table carries one index column per chip with `0` where a chip lacks a marker.
   Each animal's genotype string covers only its own chip's markers, in that
   chip's position order — getting that order wrong shifts every call silently.
+- **The final VCF contains target animals only** in a two-chip run. FImpute's
+  raw result contains both chips; `fimpute_to_vcf --target-chip 2` removes the
+  reference animals before concatenation and PLINK conversion.
 
 Note that `save_genotype` and phasing are mutually exclusive: with it set,
 FImpute returns every het as code `1` and the phase is gone. It is therefore
@@ -318,7 +340,7 @@ which is the normal case when the reference panel is a different generation.
 PLINK .bed → make_per_chrom_vcf → normalize_vcf → run_beagle → concat_chromosomes → vcf_to_plink
 ```
 
-### With reference panel (`reference_vcf` set)
+### Beagle with reference panel (`reference_vcf` set)
 
 ```
 normalize_vcf → bcftools_isec → conform_gt → run_beagle → merge_imputed_with_target_only → concat_chromosomes

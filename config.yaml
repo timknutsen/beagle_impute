@@ -54,7 +54,8 @@ fimpute_params:
   # Leave empty to impute `bfile` on its own — that still fills sporadic missing
   # calls and phases. Set it to a PLINK prefix to run a real HD→LD imputation:
   # the reference becomes FImpute's chip 1 (ref_chip=1), `bfile` becomes chip 2,
-  # and the output covers the union of both marker sets.
+  # and the output contains only `bfile` animals over the usable union of both
+  # marker sets. Reference animals are never copied to the final VCF/PLINK.
   reference_bfile: ""
 
   # Keep genotypes that were actually measured instead of letting FImpute

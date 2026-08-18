@@ -35,24 +35,31 @@ def java_heap_mb(mem_mb):
 # Parse-time feature flags
 # ---------------------------------------------------------------------------
 
-_use_ref   = bool(config.get("reference_vcf", "").strip())
-_use_bref3 = _use_ref and bool(config.get("bref3_jar", "").strip())
+_imputer = config.get("imputer", "beagle")
+_known_imputers = ("beagle", "alphaimpute2", "fimpute")
+if _imputer not in _known_imputers:
+    raise ValueError(
+        f"Unknown imputer: {_imputer!r}. "
+        f"Use one of {', '.join(_known_imputers)}."
+    )
+
+_use_alphaimpute2 = _imputer == "alphaimpute2"
+_use_fimpute      = _imputer == "fimpute"
+
+# The two reference settings are engine-specific. reference_vcf activates
+# Beagle harmonisation only; FImpute reads fimpute_params.reference_bfile in
+# rules/fimpute.smk. Keeping this flag Beagle-scoped prevents a stale Beagle
+# reference setting from pulling conform-gt rules into an FImpute run.
+_use_ref   = _imputer == "beagle" and bool(
+    str(config.get("reference_vcf") or "").strip()
+)
+_use_bref3 = _use_ref and bool(str(config.get("bref3_jar") or "").strip())
 
 # When a reference is used, Beagle writes to imputed_ref/ (markers at ref
 # positions only). The merge rule below then adds back target-only markers
 # and writes the final result to imputed/ — the same path concat_chromosomes
 # expects in both modes, so no downstream rule changes are needed.
 _beagle_subdir = "imputed_ref" if _use_ref else "imputed"
-
-_use_alphaimpute2 = config.get("imputer", "beagle") == "alphaimpute2"
-_use_fimpute      = config.get("imputer", "beagle") == "fimpute"
-
-_known_imputers = ("beagle", "alphaimpute2", "fimpute")
-if config.get("imputer", "beagle") not in _known_imputers:
-    raise ValueError(
-        f"Unknown imputer: {config.get('imputer')!r}. "
-        f"Use one of {', '.join(_known_imputers)}."
-    )
 
 # Always run plink2 with --dog so non-human chromosome codes (1–38) are
 # accepted. Salmon (29), trout (32), and most livestock fit inside this range,
