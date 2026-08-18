@@ -1,21 +1,25 @@
 # Chromosome-wise Imputation Pipeline
 
-This pipeline converts PLINK files to VCF per chromosome, optionally harmonizes against a reference VCF, and imputes with Beagle 5.5.
+This pipeline imputes chromosome-wise PLINK data with Beagle 5.5, FImpute3, or
+AlphaImpute2. Beagle accepts a phased VCF reference; FImpute accepts a PLINK
+reference panel; both engines also run without an external reference.
 
 ## 1. Requirements
 
 - **Conda** and **Snakemake** installed
-- **PLINK2** and **Beagle 5.5 JAR** (see paths in `config.yaml`)
+- **PLINK2**, plus the selected engine: Beagle 5.5 JAR, licensed FImpute3
+  binary, or AlphaImpute2 (see paths in `config.yaml`)
 - Everything else (bcftools, pandas, Java) is installed automatically via `envs/workflow_env.yaml`
 
 ## 2. Choosing an Imputer
 
-The pipeline supports two imputation engines. Set `imputer` in `config.yaml`:
+The pipeline supports three imputation engines. Set `imputer` in `config.yaml`:
 
 | Setting | Engine | Best for |
 |---------|--------|----------|
 | `imputer: "beagle"` (default) | Beagle 5.5 | LD-based imputation; no pedigree needed |
 | `imputer: "alphaimpute2"` | AlphaImpute2 | Pedigree + population; structured livestock/aquaculture |
+| `imputer: "fimpute"` | FImpute3 | Fast pedigree + population imputation; licensed binary required |
 
 AlphaImpute2 is installed automatically via pip inside `envs/alphaimpute2_env.yaml` — no JAR file needed. It requires Python 3.10 (3.12 and 3.14 are incompatible).
 
@@ -49,7 +53,10 @@ beagle_params:
   nthreads: 4      # Beagle threads — match to your CPU/cluster allocation
 ```
 
-For AlphaImpute2 mode, replace `beagle_jar` with the `alphaimpute2_params` block (see `config.yaml` comments) and set `imputer: "alphaimpute2"`. The `beagle_jar`, `conform_gt_jar`, and `bref3_jar` fields are ignored in this mode.
+For AlphaImpute2 mode, use `alphaimpute2_params`; for FImpute, use
+`fimpute_params` and set `reference_bfile` to a PLINK prefix or leave it empty.
+`reference_vcf` is Beagle-only, and `fimpute_params.reference_bfile` is
+FImpute-only: stale settings for another engine are ignored.
 
 You can also override individual values on the command line without editing the file:
 
@@ -106,6 +113,12 @@ snakemake --use-conda \
 - Intermediate AlphaImpute2 files: `vcf_output/alphaimpute2_input/` and `vcf_output/alphaimpute2_output/`
 - Logs: `logs/`
 
+**FImpute mode outputs** (`imputer: "fimpute"`):
+- Genome-wide imputed VCF + index: `vcf_output/fimpute/all_chromosomes.vcf.gz` (+ `.tbi`)
+- Final PLINK files: `vcf_output/plink_binary/imputed_data.bed/.bim/.fam`
+- With `fimpute_params.reference_bfile`, the final files contain target
+  (`bfile`) animals only; reference-chip animals are not output samples.
+
 ## 6. Accuracy Evaluation
 
 Run the accuracy workflow separately from the main imputation workflow:
@@ -119,7 +132,7 @@ snakemake --snakefile Snakefile_accuracy --use-conda --cores 8
 | Mode | Purpose |
 |------|---------|
 | `mask_and_impute` | Hold out one validation set, mask it to LD density, impute, and compare to truth |
-| `cross_array` | Compare a real low-density array against a real high-density array for the same animals |
+| `cross_array` | Compare a real low-density array against a real high-density array for the same animals, scored K-fold and identity-gated |
 | `kfold_mask_and_impute` | Run K-fold animal CV from a shared LD marker panel to full density |
 
 For the 10k-to-full benchmark requested for real data, use:
@@ -153,6 +166,75 @@ roughly `n_panel / n_total` (on a 50K chip with a 10k panel, about a fifth of
 all markers). The same exclusion applies to `mask_and_impute` and, for the
 overlap between the two arrays, to `cross_array`.
 
+### `cross_array`
+
+The same animals on two arrays, scored K-fold: each fold contributes its real
+low-density typings, and the other folds' high-density genotypes are the
+reference panel. A held-out fold rather than an external panel is what makes
+the mode work at all when nearly every high-density animal is already in the
+cohort — on the salmon arrays exactly one Ssa70kv4 fish exists outside it.
+
+The LD panel is not sampled here: it is exactly the markers both arrays carry.
+
+```bash
+snakemake --snakefile Snakefile_accuracy --use-conda --cores 8 \
+  --config accuracy_mode=cross_array \
+           accuracy_output_dir=accuracy_v3_to_v4 \
+           cross_array_ld_bfile=/path/to/Ssa70kv3 \
+           cross_array_hd_bfile=/path/to/Ssa70kv4 \
+           cv_n_folds=5 \
+           cv_imputers="beagle fimpute"
+```
+
+**An identity gate runs before anything is scored, and is not optional.**
+Pairing an animal's two typings on its ID assumes both came from one fish; when
+an ID covers two physical samples the pair is two unrelated animals and the run
+scores an imputation that never had a chance. Concordance between the arrays at
+their shared markers separates the cases cleanly — the same animal lands at
+0.95–1.0, two different fish near 0.5 — so `cross_array.identity_threshold`
+(default 0.90) sits in an empty gap. Failures land in
+`setup/identity_fail.ids`; the run aborts entirely below
+`cross_array.min_identity_pass_rate`.
+
+To mask a high-density cohort down to a real lower-density array instead of a
+random thinning — e.g. V4 fish downsampled to the 50K markers — build the panel
+first and hand it to `kfold_mask_and_impute`:
+
+```bash
+python scripts/shared_marker_list.py \
+  --bim /path/to/Ssa50kv1.bim /path/to/Ssa70kv4.bim \
+  --out 50k_v4_shared.txt
+
+snakemake --snakefile Snakefile_accuracy --use-conda --cores 8 \
+  --config accuracy_mode=kfold_mask_and_impute \
+           bfile=/path/to/Ssa70kv4 \
+           cv_target_snp_list=50k_v4_shared.txt
+```
+
+### Which markers impute reliably
+
+Both CV modes write `snp_reliability.tsv` and `reliable_markers.txt`. A marker
+qualifies on its **worst** fold, not its mean — one collapsed fold out of five
+is exactly what a mean hides. Passing `--root` more than once intersects runs,
+so a marker earns its place only by holding up in every test it was part of:
+
+```bash
+python scripts/aggregate_snp_reliability.py \
+  --root accuracy_v3_to_v4 accuracy_50k_masked_v4 \
+  --imputers beagle fimpute --folds 1 2 3 4 5 \
+  --bim /path/to/Ssa70kv4.bim \
+  --out v4_snp_reliability.tsv --reliable-out v4_reliable_markers.txt
+```
+
+### QC is expected upstream
+
+The pipeline does not filter genotypes. Bfiles handed to any accuracy mode
+should already be QC'd **per chip, before merging or pairing** — genotype status
+`OK`, `--geno`, `--maf`, and `--hwe <p> <k> midp keep-fewhet`. Run that QC
+before writing the pedigree into `.fam` (plink2's `--hwe` considers founders
+only), and apply sample-missingness exclusions to both arrays so the pairing
+survives.
+
 Command-line overrides use flat names because Snakemake does not accept dotted
 keys in `--config`:
 
@@ -174,6 +256,58 @@ CV outputs:
 - `accuracy_cv/{imputer}/fold{n}/metrics_by_snp.tsv`
 - `accuracy_cv/{imputer}/fold{n}/metrics_by_maf_bin.tsv`
 - `accuracy_cv/{imputer}/fold{n}/metrics_by_individual.tsv`
+- `accuracy_cv/snp_reliability.tsv` and `accuracy_cv/reliable_markers.txt`
+- `cross_array` also writes `setup/identity.tsv` and `setup/identity_fail.ids`
+
+## 6b. Building a reference panel
+
+Beagle's `reference_vcf` must be phased, and until now nothing in this repo
+produced one. `Snakefile_refpanel` does:
+
+```bash
+snakemake --snakefile Snakefile_refpanel --use-conda --executor slurm --jobs 30 \
+  --config refpanel_bfile=/path/to/qc_Ssa70kv1 \
+           refpanel_name=Ssa70kv1 \
+           refpanel_pedigree=/path/to/pedigree.tsv \
+           refpanel_max_per_family=4 \
+           output_dir=refpanel_output
+```
+
+Per chromosome: export → `bcftools norm -d snps` → **phase with Beagle** (`gt=`,
+no `ref=`, which also fills missing calls) → **bref3**. Outputs per variant:
+
+| File | What |
+|---|---|
+| `phased/chr<N>.vcf.gz` | phased, no missing genotypes |
+| `bref3/chr<N>.bref3` | what Beagle should actually read — smaller and far faster to load |
+| `manifest.tsv` | every animal, kept or dropped, with the reason |
+| `panel_report.tsv` | source bfile, pedigree, cap, seed, exclusions, counts |
+
+It is a one-time cost of roughly 25–30 node-minutes genome-wide; every later
+imputation loads the bref3 instead of re-phasing. The array is a parameter, so
+the same rules build the v1, v3 and v4 panels.
+
+**Diversity.** `refpanel_max_per_family` caps animals per sire × dam pair,
+because a breeding cohort is not a diverse sample — full sibs share long
+haplotype blocks, so extra sibs cost phasing time without adding much a panel
+can use. It needs a pedigree; an array export has `0` in both parent columns, so
+resolve parents from GPA first. Founders are each treated as their own family
+rather than capped as one group.
+
+**Holding animals out.** `refpanel.variants` maps a name to ID files to exclude,
+so one selection pass produces both the production panel and benchmark-safe
+variants. Exclusions are applied *before* phasing on purpose: subsetting an
+already-phased panel is cheaper but leaks, since the excluded animals' genotypes
+would already have shaped the phase of the relatives that remain.
+
+Then use it:
+
+```bash
+snakemake --use-conda --cores 8 \
+  --config bfile=/path/to/target \
+           reference_vcf=refpanel_output/full/phased/chr{chrom}.vcf.gz \
+           bref3_jar=bin/bref3.jar
+```
 
 ## 7. Testing
 
@@ -199,8 +333,9 @@ pip install pytest && pytest
 |-----------|---------------|----------------------|
 | `test_convert.py` (pure-Python group) | `GT_MAP` encoding, `read_bim`, `read_ai2_genotypes`, pedigree column format, genotype roundtrip against fixture matrix | None |
 | `test_convert.py` (`TestConvertRoundtrip`) | Full `convert()` call: bgzipped VCF content, REF/ALT allele direction, GT strings, tabix index creation, mismatch error | `bgzip`, `tabix` (htslib) |
-| `test_dryrun.py` | Snakemake DAG validation for Beagle (no ref), Beagle (with ref), and AlphaImpute2 modes — confirms rules resolve without executing anything | `snakemake` |
+| `test_dryrun.py` | Snakemake DAG validation for Beagle and FImpute, each with/without a reference, plus AlphaImpute2; also checks engine isolation | `snakemake` |
 | `test_accuracy_cv.py` | Ten-fold CV setup, FImpute I/O helpers, CV aggregation, and CV Snakemake dry-run | `snakemake` for dry-run only |
+| `test_cross_array.py` | Cross-array pairing, the shared marker panel, the identity gate, allele orientation, the LD splice, marker reliability, and the `cross_array` dry-run | `snakemake` for dry-run only |
 
 Tests that require missing tools are **automatically skipped** with a clear reason — they never fail due to a missing binary.
 
@@ -227,13 +362,19 @@ This pedigree structure allows meaningful tests of both the genotype encoding lo
 AlphaImpute2 processes all chromosomes in a single run (unlike Beagle, which is run per chromosome). The pipeline therefore produces a single genome-wide VCF rather than per-chromosome files in this mode.
 
 ### Reference panel behaviour
-When `reference_vcf` is set, the pipeline runs:
+
+For Beagle, `reference_vcf` must be phased and complete. The pipeline runs:
 1. `bcftools isec` — splits target markers into two groups: those **in the reference** and those **only in the target**
 2. `conform-gt` — harmonises strand/allele order of the intersection to match the reference
 3. `Beagle` with `ref=` — phases and imputes only the intersection markers (Beagle drops target-only markers by design)
 4. **Merge** — target-only markers are merged back with the Beagle output so the final VCF contains all original chip markers plus any markers imputed from the reference
 
 This means you can use a reference panel to improve phasing and imputation of overlapping markers without losing any of your original chip data.
+
+For FImpute, `fimpute_params.reference_bfile` activates a two-chip run:
+reference is chip 1 and target `bfile` is chip 2. The final VCF/PLINK contains
+only target animals. Leave the setting empty for one-chip phasing and sporadic
+missing-call fill.
 
 ### bref3: faster reference loading
 Setting `bref3_jar` causes the pipeline to convert the reference VCF to bref3 binary format before running Beagle. This conversion runs once; subsequent per-chromosome Beagle jobs load it 3–43× faster depending on reference panel size. The `bref3.jar` file is available on the same download page as the Beagle JAR.
@@ -245,7 +386,7 @@ Setting `bref3_jar` causes the pipeline to convert the reference VCF to bref3 bi
 
 ## Project Structure
 
-- **Snakefile**: Main imputation workflow (Beagle/AlphaImpute2)
+- **Snakefile**: Main imputation workflow (Beagle/FImpute/AlphaImpute2)
 - **Snakefile_accuracy**: Imputation accuracy evaluation workflow
 - **config.yaml**: Main pipeline configuration
 - **config_accuracy.yaml**: Accuracy evaluation configuration
@@ -257,8 +398,8 @@ Setting `bref3_jar` causes the pipeline to convert the reference VCF to bref3 bi
 ## Workflows
 
 ### 1. Imputation Pipeline
-- Converts PLINK to VCF, harmonizes (optional), imputes with Beagle or AlphaImpute2
-- Select imputer in `config.yaml` (`beagle` or `alphaimpute2`)
+- Converts PLINK data and imputes with Beagle, FImpute, or AlphaImpute2
+- Select imputer in `config.yaml` (`beagle`, `fimpute`, or `alphaimpute2`)
 - Modular rules: per-chromosome, reference panel, and imputer-specific logic
 
 ### 2. Accuracy Evaluation
@@ -273,6 +414,12 @@ Setting `bref3_jar` causes the pipeline to convert the reference VCF to bref3 bi
 - `scripts/make_accuracy_cv_setup.py`: Creates deterministic CV folds and LD SNP panels
 - `scripts/fimpute_io.py`: Converts PLINK raw exports to FImpute input files and FImpute output to VCF
 - `scripts/aggregate_cv_metrics.py`: Aggregates per-fold CV summary metrics
+- `scripts/select_refpanel.py`: Reference panel membership — family capping, exclusions, and the manifest
+- `scripts/aggregate_snp_reliability.py`: Per-marker R² across folds and runs; writes the reliable-marker list
+- `scripts/shared_marker_list.py`: Intersects two or more `.bim` files into a marker list
+- `scripts/pair_animals.py`: Matches animals across two arrays on individual ID
+- `scripts/identity_gate.py`: Turns LD-vs-HD concordance into the animal list a cross-array run uses
+- `scripts/mask_validation_genotypes.py`: Masks genotypes outside an LD panel; `--replace-from` splices a second array's calls in
 
 ## Environments
 - `envs/workflow_env.yaml`: Main pipeline dependencies

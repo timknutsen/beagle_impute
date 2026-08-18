@@ -186,6 +186,36 @@ def test_write_fimpute_vcf_emits_phased_genotypes_by_default(tmp_path):
     assert lines[2].split("\t")[-2:] == ["1|0", "./."]
 
 
+def test_write_fimpute_vcf_can_emit_only_target_chip_animals(tmp_path):
+    """A two-chip main run must not leak reference animals into its output."""
+    bim = tmp_path / "chr1.bim"
+    bim.write_text("1\tsnp1\t0\t100\tA\tG\n1\tsnp2\t0\t200\tC\tT\n")
+    id_map = tmp_path / "id_map.tsv"
+    id_map.write_text(
+        "short_id\tfid\tiid\n"
+        "1\tREF\treference_fish\n"
+        "2\tTARGET\ttarget_a\n"
+        "3\tTARGET\ttarget_b\n"
+    )
+    imp = tmp_path / "genotypes_imp.txt"
+    imp.write_text(
+        "ID\tChip\tCalls...\n"
+        "1\t1\t00\n"
+        "2\t2\t34\n"
+        "3\t2\t25\n"
+    )
+    out_vcf = tmp_path / "chr1.vcf"
+
+    write_fimpute_vcf(imp, bim, id_map, out_vcf, target_chip=2)
+
+    header = next(
+        line for line in out_vcf.read_text().splitlines()
+        if line.startswith("#CHROM")
+    )
+    assert header.split("\t")[9:] == ["target_a", "target_b"]
+    assert "reference_fish" not in header
+
+
 def test_vectorised_fimpute_encoding_matches_the_scalar_mapping():
     """
     The fast path must agree with the readable one on every code, including NA.

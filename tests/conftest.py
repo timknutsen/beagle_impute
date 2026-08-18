@@ -189,3 +189,185 @@ def synth_ai2(synth_plink, tmp_path_factory):
         "geno_by_indiv": geno_by_indiv,
         "indivs": indivs,
     }
+
+
+# ── Two-chip fixture ─────────────────────────────────────────────────────────
+#
+# synth_plink cannot express any of the failure modes the cross-array path
+# actually hits: it is one chip, has no duplicate physical positions, no animal
+# whose two typings disagree, and a .raw that encodes the same wrong assumption
+# about which allele --export A counts that the production code once had.
+# Fixture and code agreed with each other and both disagreed with reality,
+# which is how a green suite coexisted with a module that could not complete a
+# single real run.
+#
+# This fixture is built around those failures instead:
+#   * HD carries markers LD does not, and LD carries markers HD does not
+#   * one pair of HD markers sits at the same physical position
+#   * some markers have A1/A2 swapped between the two chips
+#   * two animals are mispaired -- their LD genotypes belong to another fish
+
+_TC_N_ANIMALS = 20
+_TC_N_SHARED = 24          # markers on both chips, per chromosome pair below
+_TC_N_HD_ONLY = 16         # markers only the high-density chip carries
+_TC_N_LD_ONLY = 3          # markers only the low-density chip carries
+_TC_SWAPPED = {2, 7, 15}   # indexes into the shared markers, A1/A2 reversed on LD
+_TC_MISPAIRED = ("off03", "off09")
+_TC_SEED = 20260818
+
+
+def _tc_animals():
+    founders = [
+        ("FAM1", "sire1", "0", "0", "1", "-9"),
+        ("FAM1", "sire2", "0", "0", "1", "-9"),
+        ("FAM1", "dam1", "0", "0", "2", "-9"),
+        ("FAM1", "dam2", "0", "0", "2", "-9"),
+    ]
+    offspring = [
+        (
+            "FAM1",
+            f"off{i:02d}",
+            "sire1" if i <= 8 else "sire2",
+            "dam1" if i <= 8 else "dam2",
+            "1" if i % 2 else "2",
+            "-9",
+        )
+        for i in range(1, _TC_N_ANIMALS - 3)
+    ]
+    return founders + offspring
+
+
+def _tc_markers():
+    """Return (shared, hd_only, ld_only) marker records as (chrom, id, pos, a1, a2)."""
+    shared, hd_only, ld_only = [], [], []
+    pos = 10_000
+    for i in range(_TC_N_SHARED):
+        chrom = "1" if i < _TC_N_SHARED // 2 else "2"
+        shared.append((chrom, f"shared_{i:03d}", pos + i * 1_000, "A", "G"))
+    for i in range(_TC_N_HD_ONLY):
+        chrom = "1" if i < _TC_N_HD_ONLY // 2 else "2"
+        hd_only.append((chrom, f"hdonly_{i:03d}", 500_000 + i * 1_000, "C", "T"))
+    for i in range(_TC_N_LD_ONLY):
+        ld_only.append(("1", f"ldonly_{i:03d}", 900_000 + i * 1_000, "A", "T"))
+    # One duplicate physical position on the HD chip. FImpute aborts the whole
+    # run on these ("SNPs with the same physical position found"), so the code
+    # that drops them has to see one.
+    hd_only.append(("1", "hdonly_dup", hd_only[0][2], "C", "T"))
+    return shared, hd_only, ld_only
+
+
+@pytest.fixture(scope="session")
+def synth_two_chip(tmp_path_factory):
+    """
+    A low-density and a high-density PLINK fileset over the same animals.
+
+    Returns a dict with the two prefixes plus the facts a test needs to assert
+    against: which markers are shared, which are chip-only, which had their
+    alleles swapped, and which animals are deliberately not the same fish on
+    both chips.
+    """
+    tmp = tmp_path_factory.mktemp("synth_two_chip")
+    rng = random.Random(_TC_SEED)
+
+    animals = _tc_animals()
+    n_samples = len(animals)
+    shared, hd_only, ld_only = _tc_markers()
+
+    # Truth genotypes, indexed by marker ID so both chips can draw from them.
+    truth = {
+        record[1]: [rng.choice([0, 0, 1, 1, 2]) for _ in range(n_samples)]
+        for record in shared + hd_only + ld_only
+    }
+
+    mispaired_indexes = [
+        idx for idx, animal in enumerate(animals) if animal[1] in _TC_MISPAIRED
+    ]
+
+    # LD chip: the shared markers plus its own, with a little between-array
+    # noise, the swapped markers mirrored, and the mispaired animals carrying
+    # genotypes drawn independently of the truth.
+    ld_records = []
+    ld_genos = []
+    for index, record in enumerate(shared):
+        chrom, snp_id, pos, a1, a2 = record
+        swapped = index in _TC_SWAPPED
+        ld_records.append((chrom, snp_id, pos, a2, a1) if swapped else record)
+        row = []
+        for sample_index, call in enumerate(truth[snp_id]):
+            if sample_index in mispaired_indexes:
+                call = rng.choice([0, 1, 2])
+            elif rng.random() < 0.02:
+                call = rng.choice([0, 1, 2])
+            row.append(2 - call if swapped else call)
+        ld_genos.append(row)
+    for record in ld_only:
+        ld_records.append(record)
+        ld_genos.append(list(truth[record[1]]))
+
+    # plink2 refuses a .bim whose chromosomes are interleaved ("has a split
+    # chromosome"), so both chips are emitted in coordinate order -- which is
+    # what a real export looks like anyway.
+    ld_order = sorted(
+        range(len(ld_records)), key=lambda i: (int(ld_records[i][0]), ld_records[i][2])
+    )
+    ld_records = [ld_records[i] for i in ld_order]
+    ld_genos = [ld_genos[i] for i in ld_order]
+
+    # HD chip: shared plus HD-only, in coordinate order, unmodified truth.
+    hd_records = sorted(shared + hd_only, key=lambda r: (int(r[0]), r[2]))
+    hd_genos = [list(truth[record[1]]) for record in hd_records]
+
+    def _write(prefix, records, genos):
+        with open(f"{prefix}.bim", "w") as handle:
+            for chrom, snp_id, pos, a1, a2 in records:
+                handle.write(f"{chrom}\t{snp_id}\t0\t{pos}\t{a1}\t{a2}\n")
+        _write_fam(f"{prefix}.fam", animals)
+        _write_bed(f"{prefix}.bed", genos, n_samples)
+
+    ld_prefix = str(tmp / "ld")
+    hd_prefix = str(tmp / "hd")
+    _write(ld_prefix, ld_records, ld_genos)
+    _write(hd_prefix, hd_records, hd_genos)
+
+    return {
+        "ld_bfile": ld_prefix,
+        "hd_bfile": hd_prefix,
+        "animals": animals,
+        "shared_ids": [record[1] for record in shared],
+        "hd_only_ids": [record[1] for record in hd_only],
+        "ld_only_ids": [record[1] for record in ld_only],
+        "swapped_ids": [shared[i][1] for i in sorted(_TC_SWAPPED)],
+        "mispaired_iids": list(_TC_MISPAIRED),
+        "duplicate_position_ids": ["hdonly_000", "hdonly_dup"],
+        "truth": truth,
+        "ld_records": ld_records,
+        "hd_records": hd_records,
+    }
+
+
+@pytest.fixture(scope="session")
+def synth_raw_counting_a2(synth_two_chip, tmp_path_factory):
+    """
+    A plink2 --export A .raw whose column suffix names a2, not a1.
+
+    This is what our real exports produce, and assuming otherwise mirrors every
+    genotype. Allelic r2 cannot see it -- squaring the correlation hides the
+    sign -- so it surfaces only as a collapsed concordance, long after the run.
+    """
+    tmp = tmp_path_factory.mktemp("synth_raw_a2")
+    records = synth_two_chip["hd_records"]
+    animals = synth_two_chip["animals"]
+    truth = synth_two_chip["truth"]
+
+    path = tmp / "counts_a2.raw"
+    header = ["FID", "IID", "PAT", "MAT", "SEX", "PHENOTYPE"] + [
+        f"{snp_id}_{a2}" for _chrom, snp_id, _pos, _a1, a2 in records
+    ]
+    with open(path, "w") as handle:
+        handle.write(" ".join(header) + "\n")
+        for index, (fid, iid, pat, mat, sex, pheno) in enumerate(animals):
+            # The .raw counts a2, so it reports the complement of the a1 dosage.
+            counts = [str(2 - truth[record[1]][index]) for record in records]
+            handle.write(" ".join([fid, iid, pat, mat, sex, pheno] + counts) + "\n")
+
+    return {"raw": str(path), "records": records, "animals": animals}

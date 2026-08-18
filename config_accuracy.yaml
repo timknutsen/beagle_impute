@@ -47,23 +47,63 @@ mask:
   validation_fraction: 0.2     # 20% withheld as validation; 80% used as reference
 
 # ── cross_array settings ─────────────────────────────────────────────────────
+# Runs the acc_cv_* rule family, so cv: below applies here too (n_folds, seed,
+# imputers, reference_max_animals). The LD panel is not sampled in this mode --
+# it is exactly the markers both arrays carry.
 cross_array:
   ld_bfile: ""                 # PLINK prefix of low-density array (imputation input)
                                # e.g. "data/animals_50k"
   hd_bfile: ""                 # PLINK prefix of high-density array (truth)
-                               # e.g. "data/animals_700k"
+                               # e.g. "data/animals_70kv4"
+
+  # Identity gate. Pairing an animal's two typings on its ID assumes both came
+  # from one fish; when an ID covers two physical samples the pair is two
+  # unrelated salmon and the run scores an imputation that never had a chance.
+  # Concordance between the arrays at their shared markers separates the cases
+  # cleanly -- the same animal lands at 0.95-1.0, two different fish near 0.5,
+  # nothing in between -- so any threshold in the gap works. On the 2026-08
+  # benchmark this caught 974 of 3,881 animals (25%) in one step.
+  identity_threshold: 0.90
+  # Abort rather than report a number when this share of the cohort fails.
+  min_identity_pass_rate: 0.5
+
+  # Abort if the two arrays share fewer markers than this. Too few and the
+  # identity check has nothing to judge on and the LD panel is not an array.
+  min_shared_markers: 100
 
 # ── kfold_mask_and_impute settings ──────────────────────────────────────────
 cv:
   n_folds: 10
   target_n_snps: 10000
-  target_snp_list: ""          # Optional fixed SNP list; leave empty to sample from .bim.
+  # Optional fixed SNP list; leave empty to sample from .bim. Set this to the
+  # markers shared with the low-density array (scripts/shared_marker_list.py)
+  # to mask a high-density cohort down to a real array rather than a random
+  # thinning -- e.g. V4 fish downsampled to the 50K markers.
+  # Ignored in cross_array, which derives the panel from the two .bim files.
+  target_snp_list: ""
   random_seed: 42
   imputers: ["beagle", "alphaimpute2", "fimpute"]
 
+  # Cap the reference panel at N animals per fold, sampled at random_seed.
+  # 0 keeps every non-held-out animal. Re-running with different values (and a
+  # different accuracy_output_dir) is how the accuracy-vs-panel-size curve is
+  # measured; past the plateau the extra animals are only costing compute.
+  reference_max_animals: 0
+
+  # A marker reaches reliable_markers.txt when its *worst* fold clears this,
+  # not its mean. A marker that collapses in one fold out of five has no place
+  # in a reference panel, and averaging hides exactly that.
+  reliable_r2_threshold: 0.90
+
+# NOTE: this block replaces config.yaml's fimpute_params wholesale -- the later
+# configfile wins on key collisions -- so every key FImpute needs has to be
+# repeated here, not just the ones that differ.
 fimpute_params:
   executable: "/mnt/efshome/applications/FImpute3/2026/FImpute3"
   nthreads: 1
+  reference_bfile: ""
+  keep_observed: true
+  phase_output: true
 
 # ── Accuracy metric settings ─────────────────────────────────────────────────
 # MAF bin boundaries for stratified accuracy reporting.

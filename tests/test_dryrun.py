@@ -68,6 +68,25 @@ def _ai2_config(tmp_path: Path) -> dict:
     return cfg
 
 
+def _fimpute_config(tmp_path: Path, *, use_ref: bool = False) -> dict:
+    """Minimal config for FImpute mode dry-run."""
+    cfg = _beagle_config(tmp_path)
+    cfg["imputer"] = "fimpute"
+    # A stale Beagle reference is deliberately present: engine selection must
+    # keep it from pulling harmonisation rules into an FImpute DAG.
+    cfg["reference_vcf"] = str(
+        REPO_ROOT / "tests" / "data" / "test_salmon_ref.PHASED.vcf.gz"
+    )
+    cfg["fimpute_params"] = {
+        "executable": "/mnt/efshome/applications/FImpute3/2026/FImpute3",
+        "nthreads": 1,
+        "reference_bfile": REAL_BFILE if use_ref else "",
+        "keep_observed": True,
+        "phase_output": True,
+    }
+    return cfg
+
+
 def _write_config(path: Path, cfg: dict) -> None:
     """Write a YAML config file from a plain dict (no PyYAML dependency)."""
     def _val(v):
@@ -138,6 +157,22 @@ class TestBeagleDryrun:
         combined = result.stdout + result.stderr
         assert "imputed_data.bed" in combined or result.returncode == 0
 
+    def test_explicit_empty_cli_reference_values(self, tmp_path):
+        """Snakemake parses `key=` as null; documented empty overrides work."""
+        cfg_path = tmp_path / "config.yaml"
+        _write_config(cfg_path, _beagle_config(tmp_path, use_ref=False))
+        result = subprocess.run(
+            [
+                "snakemake", "--dryrun", "--quiet",
+                "--configfile", str(cfg_path),
+                "--config", "reference_vcf=", "bref3_jar=",
+            ],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
 
 @requires_snakemake
 class TestAlphaImpute2Dryrun:
@@ -189,3 +224,35 @@ class TestAlphaImpute2Dryrun:
         assert "run_beagle" not in combined, (
             "run_beagle should not appear in the AlphaImpute2 DAG"
         )
+
+
+@requires_snakemake
+class TestFImputeDryrun:
+    @pytest.mark.parametrize("use_ref", [False, True], ids=["no_ref", "with_ref"])
+    def test_fimpute_modes_resolve(self, tmp_path, use_ref):
+        """Both the one-chip and reference-backed FImpute DAGs must resolve."""
+        cfg_path = tmp_path / "config.yaml"
+        _write_config(cfg_path, _fimpute_config(tmp_path, use_ref=use_ref))
+        result = _run_dryrun(cfg_path)
+        assert result.returncode == 0, (
+            f"Snakemake dryrun failed (FImpute, use_ref={use_ref}):\n"
+            f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        )
+
+    @pytest.mark.parametrize("use_ref", [False, True], ids=["no_ref", "with_ref"])
+    def test_fimpute_reference_rules_match_mode(self, tmp_path, use_ref):
+        """Reference preparation belongs only to the two-chip FImpute DAG."""
+        cfg_path = tmp_path / "config.yaml"
+        _write_config(cfg_path, _fimpute_config(tmp_path, use_ref=use_ref))
+        result = subprocess.run(
+            ["snakemake", "--dryrun", "--configfile", str(cfg_path)],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        combined = result.stdout + result.stderr
+        assert result.returncode == 0, combined
+        assert "run_fimpute" in combined
+        assert ("fimpute_ref_chrom_bfile" in combined) is use_ref
+        assert ("fimpute_ref_export_raw" in combined) is use_ref
+        assert "run_beagle" not in combined

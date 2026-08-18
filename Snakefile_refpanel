@@ -1,0 +1,96 @@
+# Snakefile_refpanel — build a phased, bref3-encoded reference panel.
+#
+# Usage:
+#   snakemake --snakefile Snakefile_refpanel --use-conda --cores 8 \
+#     --config refpanel_bfile=/path/to/qc_Ssa70kv1 refpanel_name=Ssa70kv1
+#
+# One array per run; the array is a parameter, so the same machinery builds the
+# v1, v3 and v4 panels. Outputs per variant:
+#
+#   <out>/<variant>/phased/chr<N>.vcf.gz   phased, no missing calls
+#   <out>/<variant>/bref3/chr<N>.bref3     what Beagle should actually read
+#   <out>/<variant>/manifest.tsv           every animal, kept or dropped, with a reason
+#   <out>/<variant>/panel_report.tsv       what this panel is and how it was made
+#
+# Feed the result to the main pipeline with reference_vcf= and bref3_jar=.
+#
+# Tool configuration (beagle_jar, plink_path, beagle_params) is inherited from
+# config.yaml; panel settings come from config_refpanel.yaml.
+
+configfile: "config.yaml"
+configfile: "config_refpanel.yaml"
+
+import pandas as pd
+
+# Same convention as the other entry points: PLINK2 defaults to --dog so
+# non-human chromosome codes up to 38 are accepted.
+config["plink_extra_flags"] = ("--dog " + config.get("plink_extra_flags", "")).strip()
+
+
+def _rp_nested(key, default=None):
+    """refpanel.<key>, its flat --config alias, or a default.
+
+    The alias is checked first: config_refpanel.yaml defines every key with an
+    empty default, so consulting the block first would swallow CLI overrides.
+    """
+    if f"refpanel_{key}" in config:
+        return config[f"refpanel_{key}"]
+    if isinstance(config.get("refpanel"), dict) and key in config["refpanel"]:
+        return config["refpanel"][key]
+    return default
+
+
+# Fold the flat aliases back into the block so rules/refpanel.smk reads one place.
+config.setdefault("refpanel", {})
+for _key in ("bfile", "name", "pedigree", "max_per_family", "random_seed"):
+    _value = _rp_nested(_key)
+    if _value is not None:
+        config["refpanel"][_key] = _value
+
+
+def rp_get_chromosomes():
+    """Chromosomes present in the source array."""
+    bfile = str(config["refpanel"].get("bfile", "")).strip()
+    if not bfile:
+        raise ValueError("refpanel.bfile is required (or the alias refpanel_bfile=).")
+    bim = pd.read_csv(f"{bfile}.bim", sep=r"\s+", header=None)
+    chroms = [str(c) for c in bim[0].unique() if str(c) not in ("0", "")]
+    return sorted(chroms, key=lambda c: (0, int(c), "") if c.isdigit() else (1, 0, c))
+
+
+# -Xmx bounds the heap only; leave room for the JVM inside the cgroup limit.
+_JAVA_HEAP_FRACTION = 0.85
+
+
+def java_heap_mb(mem_mb):
+    return max(1024, int(mem_mb * _JAVA_HEAP_FRACTION))
+
+
+_BREF3_URL = "https://faculty.washington.edu/browning/beagle/bref3.27Feb25.75f.jar"
+_BEAGLE_URL = "https://faculty.washington.edu/browning/beagle/beagle.27Feb25.75f.jar"
+
+
+def _auto_download(path, url):
+    """Fetch *url* to *path* when it is a bin/ path that does not exist yet."""
+    import os
+    import subprocess as sp
+
+    if str(path).startswith("bin/") and not os.path.exists(path):
+        os.makedirs("bin", exist_ok=True)
+        print(f"Downloading {url} -> {path}")
+        sp.run(["wget", "-q", "-O", path, url], check=True)
+
+
+onstart:
+    # The main Snakefile downloads beagle.jar and conform-gt.jar but never
+    # bref3.jar, because nothing there produced a panel.
+    _auto_download(config.get("beagle_jar", "bin/beagle.jar"), _BEAGLE_URL)
+    _auto_download(config.get("bref3_jar", "bin/bref3.jar"), _BREF3_URL)
+
+
+include: "rules/refpanel.smk"
+
+
+rule refpanel_all:
+    input:
+        expand(_rp_out + "/{variant}/panel_report.tsv", variant=sorted(_rp_variants)),
