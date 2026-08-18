@@ -140,8 +140,20 @@ intersection — pass both output directories to
 1. Run all three truth pairs on real data. Nothing here has been through Beagle
    or FImpute yet: the rules, the identity gate, the splice and the allele
    orientation are verified on a synthetic two-chip fixture and on plink2, but
-   no imputer has run. Check 50K → V1 against the 2026-08 numbers before
-   trusting anything else.
+   no imputer has run.
+
+   **Do not expect 50K → V1 to reproduce mean R² 0.955.** That number came from
+   an external 5,790-animal panel. A K=5 held-out fold gives ~1,158 animals, a
+   fifth of it, and accuracy scales with panel size — a lower number is the
+   design working, not a regression. What *is* directly comparable is the
+   identity gate: on `steps/step1` it already reproduces the ten animals
+   `verify_identity.sh` found, exactly, with the distribution bimodal at 10
+   below 0.6 and 1,447 above 0.9 and nothing in between.
+
+   If a like-for-like comparison against the 2026-08 numbers is wanted, the
+   mode would need an optional external panel (`steps/step1/beagle/ref/panel`,
+   5,790 animals, still on disk) instead of the held-out fold. That is a
+   deliberate omission, not an oversight: step 4 cannot use one.
 2. Sweep `cv.reference_max_animals` to find where accuracy plateaus.
 3. Move the dataset-preparation scripts into `scripts/` and parameterise the
    base path — still the biggest obstacle to this being a reusable tool.
