@@ -129,6 +129,16 @@ _cv_setup_fam = (
     _acc_out + "/setup/animals.txt" if _cv_cross else config["bfile"] + ".fam"
 )
 
+# The HD fileset restricted to the animals the identity gate passed. Beagle's
+# panel and truth are cut with --keep off folds.tsv and are therefore already
+# gated, but the combined fileset FImpute and AlphaImpute2 eat is built by
+# masking the whole HD file -- so without this it hands them the failed animals
+# as reference donors, complete with the pedigree links the gate just declared
+# unreliable, and the two engines are no longer scored on the same cohort.
+_cv_cohort_bfile = (
+    _acc_out + "/setup/cohort" if _cv_cross else config["bfile"]
+)
+
 
 def _cv_prefix(imputer, fold, stem):
     return f"{_acc_out}/{imputer}/fold{fold}/{stem}"
@@ -316,6 +326,41 @@ if _acc_mode in ("kfold_mask_and_impute", "cross_array"):
                     --fail-out {output.failed} \
                     --keep-out {output.animals} \
                     &> {log}
+                """
+
+        rule acc_cv_cohort_bfile:
+            """
+            The high-density fileset cut down to the animals that passed the gate.
+
+            Everything Beagle sees is already gated, because its panel and truth
+            are --keep'd off folds.tsv. The combined fileset is not: it is built
+            by masking the whole HD file, so it needs the failed animals removed
+            here or the two engines are scored on different cohorts.
+            """
+            input:
+                bed     = _cv_hd_bfile + ".bed",
+                animals = _acc_out + "/setup/animals.txt",
+            output:
+                bed = _acc_out + "/setup/cohort.bed",
+                bim = _acc_out + "/setup/cohort.bim",
+                fam = _acc_out + "/setup/cohort.fam",
+            params:
+                plink = config["plink_path"],
+                bfile = _cv_hd_bfile,
+                out   = _acc_out + "/setup/cohort",
+                extra = config.get("plink_extra_flags", ""),
+            conda:
+                "../envs/workflow_env.yaml"
+            log:
+                "logs/accuracy_cv/cohort_bfile.log",
+            shell:
+                """
+                ({params.plink} \
+                    --bfile {params.bfile} \
+                    --keep {input.animals} \
+                    --make-bed \
+                    --out {params.out} \
+                    --nonfounders --allow-no-sex {params.extra}) &> {log}
                 """
 
     rule acc_cv_setup:
@@ -516,9 +561,9 @@ if _acc_mode in ("kfold_mask_and_impute", "cross_array"):
         measure and quietly turn it into a masking test.
         """
         input:
-            bed  = _cv_hd_bfile + ".bed",
-            bim  = _cv_hd_bfile + ".bim",
-            fam  = _cv_hd_bfile + ".fam",
+            bed  = _cv_cohort_bfile + ".bed",
+            bim  = _cv_cohort_bfile + ".bim",
+            fam  = _cv_cohort_bfile + ".fam",
             ids  = _acc_out + "/setup/fold{fold}_ids.txt",
             snps = _acc_out + "/setup/ld_snp_list.txt",
             ld   = ([_cv_ld_bfile + ".bed"] if _cv_cross else []),
@@ -527,7 +572,7 @@ if _acc_mode in ("kfold_mask_and_impute", "cross_array"):
             bim = _acc_out + "/{imputer}/fold{fold}/to_impute/combined.bim",
             fam = _acc_out + "/{imputer}/fold{fold}/to_impute/combined.fam",
         params:
-            bfile = _cv_hd_bfile,
+            bfile = _cv_cohort_bfile,
             out   = lambda wc: _cv_prefix(wc.imputer, wc.fold, "to_impute/combined"),
             replace = f"--replace-from {_cv_ld_bfile}" if _cv_cross else "",
         conda:
@@ -650,10 +695,61 @@ if _acc_mode in ("kfold_mask_and_impute", "cross_array"):
             tabix -f -p vcf {output.vcf}
             """
 
+    rule acc_cv_beagle_phase_ref:
+        """
+        Phase the fold's reference panel; Beagle will not accept it otherwise.
+
+        `ref=` takes "bref3 or VCF file with phased genotypes". A panel exported
+        straight from PLINK is unphased, and Beagle aborts the chromosome with
+        "unphased or missing genotype for reference sample <id> at marker
+        <...>". Running Beagle on the panel alone, with no ref=, phases it and
+        fills its sporadic missing calls.
+
+        The 2026-08 benchmark did this as a separate prep step and reported that
+        roughly half its Beagle compute went here. The cost is unavoidable per
+        fold: every fold has a different panel, so nothing can be reused.
+        """
+        input:
+            ref = _acc_out + "/beagle/fold{fold}/normalized/ref_chr{chrom}.vcf.gz",
+            tbi = _acc_out + "/beagle/fold{fold}/normalized/ref_chr{chrom}.vcf.gz.tbi",
+        output:
+            vcf = temp(_acc_out + "/beagle/fold{fold}/phased/ref_chr{chrom}.vcf.gz"),
+            tbi = temp(_acc_out + "/beagle/fold{fold}/phased/ref_chr{chrom}.vcf.gz.tbi"),
+        params:
+            beagle  = config["beagle_jar"],
+            window  = config["beagle_params"]["window"],
+            overlap = config["beagle_params"]["overlap"],
+            ne      = config["beagle_params"]["ne"],
+            outbase = lambda wc: _cv_prefix("beagle", wc.fold, f"phased/ref_chr{wc.chrom}"),
+            heap_mb = java_heap_mb(70000),
+        threads:
+            config["beagle_params"]["nthreads"]
+        conda:
+            "../envs/workflow_env.yaml"
+        resources:
+            mem_mb = 70000,
+            slurm_partition = "r7i-ondemand-4xlarge",
+        log:
+            "logs/accuracy_cv/beagle_fold{fold}_phase_ref_chr{chrom}.log",
+        shell:
+            """
+            (java -Xmx{params.heap_mb}m -jar {params.beagle} \
+                gt={input.ref} \
+                window={params.window} overlap={params.overlap} \
+                out={params.outbase} nthreads={threads} ne={params.ne} \
+                chrom={wildcards.chrom}) &> {log}
+            tabix -f {output.vcf}
+            """
+
     rule acc_cv_run_beagle:
         input:
             gt  = _acc_out + "/beagle/fold{fold}/normalized/gt_chr{chrom}.vcf.gz",
-            ref = _acc_out + "/beagle/fold{fold}/normalized/ref_chr{chrom}.vcf.gz",
+            # Phased, not the plink2 export: see acc_cv_beagle_phase_ref.
+            ref = _acc_out + "/beagle/fold{fold}/phased/ref_chr{chrom}.vcf.gz",
+            # Both indexes are temp() and would otherwise be swept as soon as
+            # their producing job finished.
+            gt_tbi  = _acc_out + "/beagle/fold{fold}/normalized/gt_chr{chrom}.vcf.gz.tbi",
+            ref_tbi = _acc_out + "/beagle/fold{fold}/phased/ref_chr{chrom}.vcf.gz.tbi",
         output:
             vcf = temp(_acc_out + "/beagle/fold{fold}/imputed/chr{chrom}.vcf.gz"),
             tbi = temp(_acc_out + "/beagle/fold{fold}/imputed/chr{chrom}.vcf.gz.tbi"),
