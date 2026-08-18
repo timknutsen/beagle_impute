@@ -1,6 +1,13 @@
-# CLAUDE.md
+# CLAUDE.md / AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for any coding agent working in this repository. `AGENTS.md` is a
+symlink to this file, so Claude Code and Codex read the same thing; keep it that
+way rather than forking a second copy that will drift.
+
+**This file is durable architecture and conventions. For the live state — what
+was last changed, what is verified, what is blocked, and what to do next — read
+`ONBOARDING.md` first.** It is short and it is where the unfinished work is
+recorded.
 
 ## What this pipeline does
 

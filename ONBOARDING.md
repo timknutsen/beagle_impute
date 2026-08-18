@@ -1,160 +1,203 @@
 # Onboarding — beagle_impute
 
-Read `AGENTS.md` (symlink to `CLAUDE.md`) for durable architecture and
-conventions. This file is the live state at handover: what works, what does
-not, and where the bodies are buried.
+`AGENTS.md` (symlink to `CLAUDE.md`) holds durable architecture and conventions.
+This file is the live state: what works, what does not, what is verified, and
+where the bodies are buried.
 
 **Handover date:** 2026-08-18
-**Branch:** `feature/cross-array-kfold`
+**Branch:** `feature/cross-array-kfold`, 4 commits ahead of `master`, **not
+pushed, no PR open**
+**Tests:** 74 pass. All eight DAGs dry-run clean.
 
 ---
 
-## What works
+## The goal this work serves
 
-All three imputers run end to end from a PLINK bfile, a pedigree in `.fam`
-columns 3–4, and a reference panel:
+**V4 imputation**: build a complete reference panel of V4-genotyped salmon,
+which requires knowing *which V4 markers impute consistently across datasets*.
+That is measured on three truth pairs:
 
-| Imputer | Reference panel | Pedigree | Parallelism |
-|---|---|---|---|
-| Beagle 5.5 | `reference_vcf`, must be phased | ignores it | per chromosome |
-| FImpute3 | `fimpute_params.reference_bfile` → chip 1 | uses it | per chromosome |
-| AlphaImpute2 | merge into the input bfile yourself | uses it | whole genome, one thread |
-
-`imputer:` selects the engine and is validated at parse time. 69 tests pass; all
-DAGs dry-run clean, including `cross_array` across all three imputers.
-
-The FImpute path was **not** usable against real two-chip data until the
-2026-08-16 work. Six separate defects each aborted the whole run; the invariants
-are documented in `CLAUDE.md` under "What FImpute demands of its inputs". Do not
-weaken those checks — every one of them corresponds to a run that failed.
-
-The fixtures now express the failures that matter. `synth_two_chip` in
-`tests/conftest.py` carries a low- and a high-density fileset over shared
-animals, chip-only markers on both sides, a duplicate physical position, three
-markers with A1/A2 reversed between the chips, and two animals whose two typings
-are deliberately different fish. `synth_raw_counting_a2` is a `.raw` whose
-counted allele is a2, which is what our real exports produce — the old fixtures
-encoded the *same wrong assumption* the production code had, which is how 51
-green tests coexisted with a module that could not complete a single real run.
-
-`cross_array` is now a real mode. It shares the `acc_cv_*` family with
-`kfold_mask_and_impute`, cutting the LD input from one array and the reference
-panel and truth from the other, fold by fold. A held-out fold rather than an
-external panel is not a convenience: practically every Ssa70kv4 fish is also
-V3-typed, so only one V4 fish exists outside the cohort and no external V4 panel
-can be built. `CLAUDE.md` has the construction.
-
-The identity gate runs before fold assignment and is not optional. On the
-two-chip fixture it separates the planted mispairs at 0.29–0.38 concordance from
-everyone else at 0.95–1.0, and a run aborts below
-`cross_array.min_identity_pass_rate`.
-
-`snp_reliability.tsv` / `reliable_markers.txt` are the per-marker output the V4
-panel is chosen from — filtered on each marker's worst fold, and intersected
-across runs when `--root` is passed more than once.
-
-## What does not work
-
-**AlphaImpute2's place in the benchmark is unresolved.** ~12 h per step against
-FImpute's 7 minutes, losing on both accuracy and cost. It is still wired into
-every mode; nobody has decided to drop it.
-
-**`mask_and_impute` still has no FImpute path.** It now raises instead of
-silently running Beagle under FImpute's name, but the path itself does not
-exist. Use a CV mode.
-
-**The dataset-preparation scripts still live outside the repo** with hardcoded
-paths — see below. That was deliberately left out of this change: prep is an
-upstream process, not part of the imputation pipeline.
-
-## The work that lives outside this repo
-
-`/mnt/efshome/aquagen/projects/stepwise_imputation_50k_70k/` holds ~17 scripts
-that do everything between "a database" and "a bfile the pipeline can eat":
-
-cohort and ancestor resolution from genodb + GPA, pedigree construction with the
-four FImpute invariants, reference-panel assembly, cross-array dataset matching,
-per-array export with duplicate-cluster handling, and the identity gate
-(`verify_identity.sh`).
-
-**Every one of them hardcodes that project path.** The logic is general; the form
-is not. This is the single biggest obstacle to the repo being a reusable tool,
-and it is where all six FImpute bugs and the identity problem were actually
-found. Moving them into `scripts/` with the base path as an argument is the
-highest-value refactor available.
-
-## Live state of the salmon benchmark
-
-Stepwise 50K → 70Kv1 → v2 → v3 → v4, three imputers, accuracy and speed.
-Working dir as above; see its `README.md` for the full write-up.
-
-Step 1 (50K → 70Kv1), 1,457 fish, 9,466 markers scored, 5,790-animal panel:
-
-| Imputer | mean R² | concordance | node-minutes |
-|---|---:|---:|---:|
-| Beagle 5.5 | 0.955 | 0.981 | 38 |
-| FImpute3 | 0.924 | 0.970 | 7 |
-| AlphaImpute2 | pending | pending | ~716 |
-
-Beagle leads on accuracy; FImpute costs ~6× less compute for ~2 points of R².
-AlphaImpute2 was still running at handover (job 415, ~12 h, on the ancestor
-panel) and is not competitive on either axis.
-
-**Two results worth carrying forward:**
-
-*Ancestors in the panel help Beagle and hurt FImpute.* Adding 948 genotyped
-ancestors moved Beagle +0.0013 and FImpute −0.0064. Pedigree depth made no
-difference at all (0.9246 one generation vs 0.9244 two), so the effect is the
-panel's composition, not the pedigree. Hypothesis, untested: Beagle's HMM gains
-from more haplotype diversity while FImpute's long-block matching is diluted by it.
-
-*Step 2 is not a result, it is a data problem.* It scored mean R² 0.53 because
-**974 of its 3,881 animals (25%) have LD and HD genotypes from different
-physical fish**. The distribution is sharply bimodal at 0.4–0.6 versus 0.9–1.0.
-Steps 1 and 3 have 10 and 72 such animals. Any conclusion from step 2 before
-those animals are removed is worthless.
-
-Steps 2–3 have ancestor panels built and Beagle/FImpute scored (step 2 invalid
-per above). **Step 4 cannot be run in this design at all**: only one Ssa70kv4
-fish exists outside the cohort, because each array version was used for one
-period and an animal's parents were therefore typed on the *previous* array. It
-needs a held-out-fold reference or it stays out.
-
-## The three truth pairs this was built for
-
-Target: a complete reference panel of V4-genotyped salmon, which needs to know
-which V4 markers impute consistently across datasets.
-
-| Test | Mode | Notes |
+| Test | Mode | Status |
 |---|---|---|
-| 50K → V1 | `cross_array` | method benchmark; scores V1 markers. Reproduces the 2026-08 numbers if it is right |
-| V3 → V4 | `cross_array` | scores V4 markers on a real array transition |
-| 50K-masked → V4 | `kfold_mask_and_impute` | `cv.target_snp_list` = the 50K ∩ V4 markers from `scripts/shared_marker_list.py` |
+| 50K → V1 | `cross_array` | inputs verified, setup stage run, **never run end to end** |
+| V3 → V4 | `cross_array` | not started |
+| 50K-masked → V4 | `kfold_mask_and_impute` with `cv.target_snp_list` | not started |
 
 Only the last two score V4 markers, so the reliable-marker list is their
-intersection — pass both output directories to
+intersection: pass both output directories to
 `scripts/aggregate_snp_reliability.py --root`.
 
-## Suggested direction for the next session
+---
 
-1. Run all three truth pairs on real data. Nothing here has been through Beagle
-   or FImpute yet: the rules, the identity gate, the splice and the allele
-   orientation are verified on a synthetic two-chip fixture and on plink2, but
-   no imputer has run.
+## What changed on this branch
 
-   **Do not expect 50K → V1 to reproduce mean R² 0.955.** That number came from
-   an external 5,790-animal panel. A K=5 held-out fold gives ~1,158 animals, a
-   fifth of it, and accuracy scales with panel size — a lower number is the
-   design working, not a regression. What *is* directly comparable is the
-   identity gate: on `steps/step1` it already reproduces the ten animals
-   `verify_identity.sh` found, exactly, with the distribution bimodal at 10
-   below 0.6 and 1,447 above 0.9 and nothing in between.
+Four commits; read their messages, they carry the reasoning.
 
-   If a like-for-like comparison against the 2026-08 numbers is wanted, the
-   mode would need an optional external panel (`steps/step1/beagle/ref/panel`,
-   5,790 animals, still on disk) instead of the held-out fold. That is a
-   deliberate omission, not an oversight: step 4 cannot use one.
-2. Sweep `cv.reference_max_animals` to find where accuracy plateaus.
-3. Move the dataset-preparation scripts into `scripts/` and parameterise the
-   base path — still the biggest obstacle to this being a reusable tool.
-4. Decide whether AlphaImpute2 stays in the benchmark.
+1. **`cross_array` rebuilt** as an identity-gated K-fold sharing the `acc_cv_*`
+   family with `kfold_mask_and_impute`. It had never produced a valid number.
+2. **ONBOARDING correction** — the 0.955 target was wrong (see "Do not expect").
+3. **Beagle reference phasing + cohort gating** — two defects that only appear
+   when an imputer actually runs.
+4. **`Snakefile_refpanel`** — phased, bref3-encoded reference panels. This is
+   where `reference_vcf` is supposed to come from; nothing produced one before.
+
+---
+
+## Verified on real data — do not re-derive
+
+Measured against `/mnt/efshome/aquagen/projects/stepwise_imputation_50k_70k/steps/step1`
+(1,457 fish, LD 47,913 ⊆ HD 57,383, 9,470 markers to score).
+
+**Identity gate reproduces the hand-rolled `verify_identity.sh` exactly**: the
+same 10 animals, and the distribution is bimodal with nothing in the gap —
+10 below 0.6, **zero** between 0.6 and 0.9, 1,447 above 0.9.
+
+**The two arrays genotype the same fish essentially identically.** For the 1,447
+genuine pairs: per-animal concordance mean 0.9979 (worst 0.9802); per-marker
+mean concordance 0.9979, allelic r² 0.9941; only **8** markers of 47,447 below
+0.95, and **zero** below 0.50 — so no allele flips or systematic mismapping.
+The between-array noise floor is ~0.2% of calls, which caps achievable
+concordance near 0.998.
+
+**Beagle and FImpute both complete.** Fold 1 chr29: 35 s wall for phase +
+impute on 4 cores, scoring r² 0.974 / concordance 0.987 against a 1,157-animal
+panel. FImpute chr29 in 2 s.
+
+**Panel construction works.** chr29 of a 6,331-animal Ssa70kv1 panel builds in
+1 m 50 s on 4 cores, comes back fully phased with zero missing calls, and Beagle
+loads the bref3 as `ref=` reporting 6,331 reference samples.
+
+### Array facts — constraints, not bugs
+
+| | |
+|---|---|
+| 50K ∩ v1 | 48,623 shared; 19,499 v1-only to impute (28.6% of v1) |
+| v1 ∩ v4 | **0 animals**; v1 lacks 16,728 V4 markers (24.2%) |
+| v3 ∩ v4 | 1,621 of 1,629 animals; v3 lacks 9,583 V4 markers (13.9%) |
+| Year classes | v1 2014–2019 · v3 2018–2024 · v4 2022–2024 |
+| Panel pool for v1 | 6,331 typed + 1,252 ancestors, only 1 overlapping ≈ 7,582 |
+
+**A v1 panel cannot serve the V4 goal.** No shared animals, no shared year
+classes, and a quarter of V4 is not on the array at any accuracy. v3 is the only
+usable bridge, and 13.9% of V4 is beyond even that.
+
+**453 markers sit at different coordinates on the 50K and v1 exports**, 420 of
+them on a *different chromosome*, in contiguous blocks. It is in the source
+exports (481 raw between 50K and v1; 452 between v1 and v4), i.e. the database's
+per-array annotation. `shared_marker_list.py` drops them from the panel.
+
+---
+
+## What does not work / is not done
+
+1. **No truth pair has been run end to end.** Everything above is one
+   chromosome, one fold, plus the setup stage. Nothing has produced a
+   `cv_summary.tsv`.
+
+2. **`cross_array` cannot use an external reference panel.** It always builds
+   the panel from held-out folds. That is correct and necessary for V3 → V4,
+   where no external V4 panel can exist — but it blocks three separate things:
+   comparing step 1 like-for-like against the 2026-08 numbers; validating a
+   permanent panel against a held-out 50K dataset; and measuring whether family
+   capping helps. **This is the highest-value next change**: an optional
+   `cross_array.reference_bfile` that replaces the fold-derived panel. Roughly
+   an hour.
+
+3. **The 453 position-mismatch markers are scored but should not be.** They are
+   correctly kept out of the imputer's input, but they land in the truth, so
+   4.6% of the scored set is judged on an annotation disagreement rather than on
+   imputation. Conservative, so it does not invalidate anything — but exclude
+   them from the truth as well.
+
+4. **`qc_Ssa70kv1` does not exist.** Only `raw_Ssa70kv1` is on disk;
+   `qc_arrays.sh` was written but its output is not there. Building a panel from
+   `raw_` skips `--geno` / `--hwe` / `--maf` entirely.
+
+5. **The pedigree covers 1,457 animals, not the 6,331 on the array.** Family
+   capping in `Snakefile_refpanel` needs GPA resolved for all of them, and
+   `select_refpanel.py` refuses to cap without a pedigree rather than silently
+   building an uncapped panel.
+
+6. **AlphaImpute2's place is still unresolved.** ~12 h per step against
+   FImpute's minutes, losing on both axes. Still wired into every mode.
+
+7. **`mask_and_impute` has no FImpute path.** It now raises instead of silently
+   running Beagle under FImpute's name, but the path does not exist. Use a CV mode.
+
+---
+
+## Gotchas that have each cost a run
+
+- **`temp()` outputs nothing declares as input are swept immediately.** This bit
+  three times: identity `.tbi`, the panel `.bim`/`.fam`, the phased ref `.tbi`.
+  If a rule reads a file, name it in `input:` even when the tool only needs it
+  incidentally.
+- **A flat `--config` alias must beat the YAML block.** `config_accuracy.yaml`
+  defines every `cv.*` key, so resolving the block first made `cv_n_folds=2`
+  accepted, ignored, and silently run as ten folds. Both `_nested_config`
+  (`rules/accuracy.smk`) and `_acc_nested` (`Snakefile_accuracy`) now check the
+  alias first. Keep that order.
+- **Beagle's `ref=` must be phased *and* complete.** A plain PLINK export aborts
+  the chromosome. `acc_cv_beagle_phase_ref` / `refpanel_phase` run Beagle with
+  `gt=` and no `ref=`, which phases and fills missing calls in one pass.
+- **`plink2 --export A` counts a2 on our exports, not a1.** Read the `.raw`
+  column suffix. Getting it wrong mirrors every genotype.
+- **Allelic R² cannot see an allele flip** — squaring hides the sign. Always
+  read concordance alongside it, and check `n_variants_evaluated` is what you
+  expect. A flip once gave r² 0.932 with concordance 0.409.
+- **Dry-runs prove almost nothing.** Every defect fixed in commits 3 and 4
+  dry-ran clean. Run one chromosome before trusting a DAG.
+
+---
+
+## Decisions already made — do not relitigate
+
+- **Repo scope is the accuracy modes and panel construction.** Dataset prep
+  stays upstream; the ~17 scripts in `stepwise_imputation_50k_70k/` were
+  deliberately not ported.
+- **`--maf 0.025` applies everywhere, including the scored markers.** Chosen
+  knowing it roughly halves the scoring set and reads optimistic.
+- **Panel comparison axis is size** (`cv.reference_max_animals`), not composition.
+- **Reference panels: one selection pass, one manifest, several variants.**
+  Exclusions are applied *before* phasing, never by subsetting a phased panel.
+- **Family capping is the diversity criterion**, and the machinery is per array.
+
+**One caveat on capping, because the justification flips by use case.** For
+imputing a *new, unrelated* 50K dataset, redundant sibs contribute haplotypes
+the first few already gave, so capping is right. For imputing the *next
+generation of the same families*, sibs are the signal and capping removes it —
+in fold 1, 85% of targets had a half sib in the panel and chr29 scored r² 0.974
+with 1,157 animals, against 0.955 for August's 5,790 non-relatives. Do not apply
+one rule to both cases, and settle it by measurement once item 2 above exists.
+
+**Do not expect 50K → V1 to reproduce mean R² 0.955.** That came from an
+external 5,790-animal panel. A K=5 held-out fold gives ~1,158 — a fifth of it —
+and accuracy scales with panel size, so a lower number is the design working.
+What *is* comparable is the identity gate, which already reproduces exactly.
+
+---
+
+## Suggested order for the next session
+
+1. Add `cross_array.reference_bfile` (item 2). It unblocks the most.
+2. Run 50K → V1 end to end and read R² and concordance together.
+3. Exclude the 453 position-mismatch markers from the truth (item 3).
+4. Produce `qc_Ssa70kv1` and the full-array pedigree, then build the v1 panel
+   and measure capped vs uncapped against a held-out 50K set.
+5. Run V3 → V4 and 50K-masked → V4; intersect their marker reliability.
+6. Decide whether AlphaImpute2 stays.
+
+```bash
+# 50K -> V1, the run that is ready to go
+snakemake --snakefile Snakefile_accuracy --use-conda --executor slurm --jobs 35 \
+  --config accuracy_mode=cross_array \
+           cross_array_ld_bfile=<...>/steps/step1/ld \
+           cross_array_hd_bfile=<...>/steps/step1/hd \
+           accuracy_output_dir=accuracy_50k_to_v1 \
+           beagle_jar=bin/beagle.jar \
+           cv_n_folds=5 cv_imputers="beagle fimpute"
+```
+
+1,671 jobs; the gate serialises the first ~4 minutes, then 290 Beagle
+chromosome-jobs fan out. Expect roughly 30–45 minutes wall at 35 slots, half of
+it panel phasing.
