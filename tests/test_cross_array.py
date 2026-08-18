@@ -510,3 +510,106 @@ def test_a_duplicate_physical_position_is_dropped_across_both_chips(synth_two_ch
     assert len(survivors) == 1, f"both markers survived: {survivors}"
     assert not deduped_hd.duplicated(subset=["chrom", "pos"]).any()
     assert not deduped_ld.duplicated(subset=["chrom", "pos"]).any()
+
+
+# ── Reference panel selection ────────────────────────────────────────────────
+
+from select_refpanel import family_key, select  # noqa: E402
+
+
+def _panel_fam(n_families=3, per_family=5):
+    rows = []
+    for f in range(n_families):
+        for i in range(per_family):
+            rows.append(("FAM1", f"fish_{f}_{i}", f"sire{f}", f"dam{f}"))
+    return (
+        pd.DataFrame(rows, columns=["fid", "iid", "sire", "dam"]),
+        pd.DataFrame(rows, columns=["fid", "iid", "sire", "dam"])[["iid", "sire", "dam"]],
+    )
+
+
+def test_family_cap_thins_each_family_and_keeps_them_all():
+    """
+    The tenth full sib adds almost no haplotype a panel can use, but costs the
+    same phasing time and pulls allele frequencies toward the biggest families.
+    Capping must thin every family, not drop whole ones.
+    """
+    fam, ped = _panel_fam(n_families=3, per_family=5)
+
+    panel = select(fam, ped, excluded=set(), max_per_family=2, seed=1)
+    kept = panel.loc[panel["kept"]]
+
+    assert len(kept) == 6
+    assert kept.groupby(["sire", "dam"]).size().tolist() == [2, 2, 2]
+
+
+def test_family_cap_is_deterministic_at_a_seed():
+    fam, ped = _panel_fam()
+    first = select(fam, ped, set(), 2, seed=7)
+    second = select(fam, ped, set(), 2, seed=7)
+    assert first.loc[first.kept, "iid"].tolist() == second.loc[second.kept, "iid"].tolist()
+
+
+def test_animals_without_parents_are_not_capped_as_one_family():
+    """
+    Founders carry no sire or dam. Treating "unknown" as a single family would
+    cap the entire founder set to N animals and throw away the broadest
+    haplotype diversity in the panel.
+    """
+    fam = pd.DataFrame(
+        [("FAM1", f"founder{i}", "0", "0") for i in range(10)],
+        columns=["fid", "iid", "sire", "dam"],
+    )
+    ped = fam[["iid", "sire", "dam"]]
+
+    panel = select(fam, ped, excluded=set(), max_per_family=2, seed=1)
+
+    assert panel["kept"].all(), "founders were capped as though they were full sibs"
+    assert family_key({"iid": "a", "sire": "0", "dam": "0"}) != family_key(
+        {"iid": "b", "sire": "0", "dam": "0"}
+    )
+
+
+def test_exclusions_are_applied_before_the_cap_and_recorded():
+    """
+    Held-out animals must leave before phasing. Subsetting a phased panel later
+    is cheaper but leaks: their genotypes would already have informed the phase
+    of the relatives that remain.
+    """
+    fam, ped = _panel_fam(n_families=2, per_family=4)
+    excluded = {"fish_0_0", "fish_0_1"}
+
+    panel = select(fam, ped, excluded=excluded, max_per_family=4, seed=1)
+
+    assert set(panel.loc[~panel["kept"], "iid"]) == excluded
+    reasons = dict(zip(panel["iid"], panel["reason"]))
+    assert reasons["fish_0_0"] == "held out by exclusion list"
+    assert reasons["fish_1_0"] == "selected"
+
+
+@requires_snakemake
+def test_refpanel_dryrun_resolves(tmp_path, synth_two_chip):
+    """The panel workflow is the piece that lets reference_vcf ever be phased."""
+    result = subprocess.run(
+        [
+            "snakemake",
+            "--snakefile", "Snakefile_refpanel",
+            "--dryrun", "--quiet", "rules",
+            "--config",
+            f"refpanel_bfile={synth_two_chip['hd_bfile']}",
+            "refpanel_name=testarray",
+            "refpanel_max_per_family=0",
+            f"output_dir={tmp_path / 'refpanel'}",
+            "plink_path=plink2",
+            "beagle_jar=fake.jar",
+            "bref3_jar=fake_bref3.jar",
+        ],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"refpanel dryrun failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    for rule in ("refpanel_select", "refpanel_phase", "refpanel_bref3", "refpanel_report"):
+        assert rule in result.stdout, f"{rule} missing:\n{result.stdout}"

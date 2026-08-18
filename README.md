@@ -246,6 +246,56 @@ CV outputs:
 - `accuracy_cv/snp_reliability.tsv` and `accuracy_cv/reliable_markers.txt`
 - `cross_array` also writes `setup/identity.tsv` and `setup/identity_fail.ids`
 
+## 6b. Building a reference panel
+
+Beagle's `reference_vcf` must be phased, and until now nothing in this repo
+produced one. `Snakefile_refpanel` does:
+
+```bash
+snakemake --snakefile Snakefile_refpanel --use-conda --executor slurm --jobs 30 \
+  --config refpanel_bfile=/path/to/qc_Ssa70kv1 \
+           refpanel_name=Ssa70kv1 \
+           refpanel_pedigree=/path/to/pedigree.tsv \
+           refpanel_max_per_family=4 \
+           output_dir=refpanel_output
+```
+
+Per chromosome: export → `bcftools norm -d snps` → **phase with Beagle** (`gt=`,
+no `ref=`, which also fills missing calls) → **bref3**. Outputs per variant:
+
+| File | What |
+|---|---|
+| `phased/chr<N>.vcf.gz` | phased, no missing genotypes |
+| `bref3/chr<N>.bref3` | what Beagle should actually read — smaller and far faster to load |
+| `manifest.tsv` | every animal, kept or dropped, with the reason |
+| `panel_report.tsv` | source bfile, pedigree, cap, seed, exclusions, counts |
+
+It is a one-time cost of roughly 25–30 node-minutes genome-wide; every later
+imputation loads the bref3 instead of re-phasing. The array is a parameter, so
+the same rules build the v1, v3 and v4 panels.
+
+**Diversity.** `refpanel_max_per_family` caps animals per sire × dam pair,
+because a breeding cohort is not a diverse sample — full sibs share long
+haplotype blocks, so extra sibs cost phasing time without adding much a panel
+can use. It needs a pedigree; an array export has `0` in both parent columns, so
+resolve parents from GPA first. Founders are each treated as their own family
+rather than capped as one group.
+
+**Holding animals out.** `refpanel.variants` maps a name to ID files to exclude,
+so one selection pass produces both the production panel and benchmark-safe
+variants. Exclusions are applied *before* phasing on purpose: subsetting an
+already-phased panel is cheaper but leaks, since the excluded animals' genotypes
+would already have shaped the phase of the relatives that remain.
+
+Then use it:
+
+```bash
+snakemake --use-conda --cores 8 \
+  --config bfile=/path/to/target \
+           reference_vcf=refpanel_output/full/phased/chr{chrom}.vcf.gz \
+           bref3_jar=bin/bref3.jar
+```
+
 ## 7. Testing
 
 The test suite lives in `tests/` and uses [pytest](https://docs.pytest.org). No pipeline tools (plink2, Beagle, AlphaImpute2) are required for the default test run.
@@ -345,6 +395,7 @@ Setting `bref3_jar` causes the pipeline to convert the reference VCF to bref3 bi
 - `scripts/make_accuracy_cv_setup.py`: Creates deterministic CV folds and LD SNP panels
 - `scripts/fimpute_io.py`: Converts PLINK raw exports to FImpute input files and FImpute output to VCF
 - `scripts/aggregate_cv_metrics.py`: Aggregates per-fold CV summary metrics
+- `scripts/select_refpanel.py`: Reference panel membership — family capping, exclusions, and the manifest
 - `scripts/aggregate_snp_reliability.py`: Per-marker R² across folds and runs; writes the reliable-marker list
 - `scripts/shared_marker_list.py`: Intersects two or more `.bim` files into a marker list
 - `scripts/pair_animals.py`: Matches animals across two arrays on individual ID

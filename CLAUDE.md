@@ -185,6 +185,63 @@ before the include runs.
 Beagle under FImpute's name. FImpute is reachable through the two CV modes,
 which pick the engine per fold from `cv.imputers`.
 
+## Reference panel construction (separate Snakefile)
+
+```bash
+snakemake --snakefile Snakefile_refpanel --use-conda --cores 8 \
+  --config refpanel_bfile=/path/to/qc_Ssa70kv1 refpanel_name=Ssa70kv1
+```
+
+Reads `config.yaml` + `config_refpanel.yaml`. Builds one array's panel per run;
+the array is a parameter, so the same rules produce the v1, v3 and v4 panels.
+
+```
+select → keep → per-chrom VCF → bcftools norm -d snps → PHASE → bref3
+```
+
+**This is where `reference_vcf` comes from.** `config.yaml` documents it as
+"must be phased" and trusts the caller — nothing in the main pipeline ever
+produced one. Beagle enforces it and aborts a chromosome with `unphased or
+missing genotype for reference sample <id> at marker <...>` the moment it is
+handed a plain PLINK export. `refpanel_phase` runs Beagle with `gt=` and no
+`ref=`, which both phases the panel and fills its missing calls; both are
+required, so a phase-only tool would not be enough.
+
+`bref3.jar` is auto-downloaded into `bin/` like `beagle.jar`; the main
+Snakefile's `onstart` never fetched it because nothing there built a panel.
+
+### Panel composition
+
+`refpanel.max_per_family` caps animals per sire × dam pair. A breeding cohort is
+not a diverse sample: full sibs share long haplotype blocks, so the tenth sib
+adds almost nothing a panel can use while costing the same phasing time, and it
+drags the panel's allele frequencies toward whichever families were bred most.
+On step 1's 1,457 animals a cap of 4 removes 474 (33%), a cap of 2 removes 788.
+
+Capping needs a pedigree and `scripts/select_refpanel.py` refuses without one —
+an array export straight from the database has `0` in both parent columns, so
+there are no families to cap. Resolve them from GPA first.
+
+**Animals with unknown parents are each their own family.** Collapsing them into
+one "unknown" group would cap the entire founder set to N animals and discard
+the broadest haplotype diversity the panel has.
+
+### Variants, and why exclusions happen before phasing
+
+`refpanel.variants` maps a name to a list of ID files to hold out. `full: []` is
+the production panel; a benchmark variant names the animals it must not contain.
+One selection pass, one manifest, several panels.
+
+Exclusions are applied at selection, **not** by subsetting an already-phased
+panel. The cheap route leaks: the excluded animals' genotypes inform the phase
+estimates of the relatives that remain, so an accuracy benchmark built that way
+is scored against a panel its own test animals helped build. Each variant is
+phased separately; at roughly 25–30 node-minutes genome-wide that is affordable.
+
+Every run writes `manifest.tsv` (one row per animal with the reason it was kept
+or dropped) and `panel_report.tsv` (source bfile, pedigree, cap, seed,
+exclusions, counts). A bref3 blob carries no provenance of its own.
+
 ## Architecture
 
 ### Mode flags (set at parse time in `Snakefile`)
@@ -274,6 +331,8 @@ normalize_vcf → bcftools_isec → conform_gt → run_beagle → merge_imputed_
 - `Snakefile` — main entry point; all Beagle rules + concat + vcf_to_plink
 - `rules/intersect_and_conform.smk` — `bcftools_isec`, `conform_gt`, `convert_ref_to_bref3` (only loaded when `reference_vcf` is set)
 - `rules/alphaimpute2.smk` — AlphaImpute2 mode rules (only loaded when `imputer: "alphaimpute2"`)
+- `rules/refpanel.smk` — phased + bref3 reference panel construction (only used
+  via `Snakefile_refpanel`)
 - `rules/accuracy.smk` — imputation accuracy evaluation (only used via `Snakefile_accuracy`).
   Holds two parallel rule families: `acc_*` for `mask_and_impute`, and `acc_cv_*`
   shared by `kfold_mask_and_impute` and `cross_array`.
@@ -282,6 +341,8 @@ normalize_vcf → bcftools_isec → conform_gt → run_beagle → merge_imputed_
 - `scripts/make_accuracy_cv_setup.py` — deterministic CV fold assignment + shared LD SNP panel
 - `scripts/fimpute_io.py` — PLINK raw ↔ FImpute input/output conversion
 - `scripts/aggregate_cv_metrics.py` — aggregates per-fold CV summaries into `cv_summary.tsv`
+- `scripts/select_refpanel.py` — panel membership: family capping, exclusions,
+  and the manifest that explains both
 - `scripts/aggregate_snp_reliability.py` — per-marker R² across folds and runs →
   `snp_reliability.tsv` + `reliable_markers.txt`
 - `scripts/pair_animals.py` — matches animals across two arrays on IID
@@ -320,6 +381,9 @@ the default `r7i-ondemand-large` (15 GiB / 2 CPU) and sbatch rejects the job
 | `acc_cv_concat_*` | 64000 | `r7i-ondemand-4xlarge` |
 | `acc_cv_alphaimpute2_to_vcf` / `acc_cv_run_fimpute` | 32000 | `r7i-ondemand-2xlarge` |
 | `acc_cv_identity_metrics` | 32000 | `r7i-ondemand-2xlarge` |
+| `acc_cv_beagle_phase_ref` | 70000 | `r7i-ondemand-4xlarge` |
+| `refpanel_phase` | 70000 | `r7i-ondemand-4xlarge` |
+| `refpanel_bref3` | 16000 | `r7i-ondemand-2xlarge` |
 | `acc_cv_run_alphaimpute2` | 16000 | `r7i-ondemand-2xlarge` |
 | `run_alphaimpute2` (main pipeline) | 16000 | `r7i-ondemand-2xlarge` |
 | `alphaimpute2_to_vcf` (main pipeline) | 32000 | `r7i-ondemand-2xlarge` |
