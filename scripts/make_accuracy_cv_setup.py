@@ -48,7 +48,10 @@ def main() -> None:
     parser.add_argument("--n-folds", required=True, type=int)
     parser.add_argument("--target-n-snps", required=True, type=int)
     parser.add_argument("--seed", required=True, type=int)
-    parser.add_argument("--target-snp-list", default="", type=Path)
+    # Deliberately not type=Path: Path("") is PosixPath("."), which is truthy,
+    # so an omitted list would be read as "the current directory is my SNP list"
+    # and every random-panel run would die inside choose_ld_panel.
+    parser.add_argument("--target-snp-list", default="")
     parser.add_argument("--folds-out", required=True, type=Path)
     parser.add_argument("--snps-out", required=True, type=Path)
     args = parser.parse_args()
@@ -66,7 +69,7 @@ def main() -> None:
         bim,
         n_snps=args.target_n_snps,
         seed=args.seed,
-        snp_list=args.target_snp_list if str(args.target_snp_list) else None,
+        snp_list=args.target_snp_list or None,
     )
 
     args.folds_out.parent.mkdir(parents=True, exist_ok=True)

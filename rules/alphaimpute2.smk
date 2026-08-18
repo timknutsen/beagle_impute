@@ -106,6 +106,7 @@ rule run_alphaimpute2:
         "logs/run_alphaimpute2.log",
     resources:
         mem_mb = 16000,
+        slurm_partition = "r7i-ondemand-2xlarge",
     shell:
         """
         mkdir -p "$(dirname {output.genotypes})"
@@ -148,5 +149,6 @@ rule alphaimpute2_to_vcf:
         "logs/alphaimpute2_to_vcf.log",
     resources:
         mem_mb = 32000,
+        slurm_partition = "r7i-ondemand-2xlarge",
     script:
         "../scripts/alphaimpute2_to_vcf.py"

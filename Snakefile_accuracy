@@ -11,8 +11,11 @@
 #   mask_and_impute  Mask a fraction of your animals to a lower SNP density,
 #                    impute them, compare to their true high-density genotypes.
 #
-#   cross_array      Same animals genotyped on two arrays. Impute from the
-#                    low-density array and compare to the high-density truth.
+#   cross_array      Same animals genotyped on two arrays, scored K-fold. Each
+#                    fold contributes its real low-density typings; the other
+#                    folds' high-density genotypes are the reference panel. An
+#                    identity gate drops animals whose two typings are not the
+#                    same physical fish before anything is scored.
 #
 #   kfold_mask_and_impute
 #                    Ten-fold style animal CV.  Held-out animals are masked to
@@ -30,6 +33,24 @@ import pandas as pd
 _acc_mode = config.get("accuracy_mode", "mask_and_impute")
 _acc_out  = config.get("accuracy_output_dir", "accuracy_output")
 
+
+def _acc_nested(section, key, default=None):
+    """Read a nested config key, its flat --config alias, or its dotted form.
+
+    Mirrors _nested_config in rules/accuracy.smk; needed here because
+    acc_get_chromosomes runs before the include. Snakemake rejects dotted keys
+    on --config, so cross_array_hd_bfile= is the CLI spelling -- and it has to
+    be checked before the YAML block, which defines every key with an empty
+    default and would otherwise swallow the override.
+    """
+    if f"{section}_{key}" in config:
+        return config[f"{section}_{key}"]
+    if f"{section}.{key}" in config:
+        return config[f"{section}.{key}"]
+    if isinstance(config.get(section), dict) and key in config[section]:
+        return config[section][key]
+    return default
+
 # Match the main Snakefile convention: default PLINK2 to --dog so non-human
 # chromosome codes up to 38 are accepted in accuracy/cross-validation runs.
 config["plink_extra_flags"] = ("--dog " + config.get("plink_extra_flags", "")).strip()
@@ -38,12 +59,19 @@ config["plink_extra_flags"] = ("--dog " + config.get("plink_extra_flags", "")).s
 def acc_get_chromosomes():
     """
     Return sorted chromosome list from the source bfile.
-    For mask_and_impute the source is config["bfile"];
-    for cross_array it is the LD bfile.
+
+    For cross_array the source is the *high-density* array: it is the superset,
+    it defines the truth, and a chromosome carried only by it would otherwise
+    never be imputed or scored. Everywhere else the one bfile is the source.
     Chromosomes in masked / subsetted files are always a subset of the source.
     """
     if _acc_mode == "cross_array":
-        bfile = config["cross_array"]["ld_bfile"]
+        bfile = _acc_nested("cross_array", "hd_bfile", "")
+        if not str(bfile).strip():
+            raise ValueError(
+                "accuracy_mode: cross_array needs cross_array.hd_bfile "
+                "(or the flat alias cross_array_hd_bfile=)."
+            )
     else:
         bfile = config["bfile"]
     bim = pd.read_csv(f"{bfile}.bim", sep=r"\s+", header=None)
@@ -63,18 +91,32 @@ def java_heap_mb(mem_mb):
 include: "rules/accuracy.smk"
 
 
+def _accuracy_targets():
+    """The files a run must produce, per mode.
+
+    Both CV modes end at the same set: the run-level comparison, the per-imputer
+    means, and the per-marker reliability table the reference panel is actually
+    chosen from. cross_array adds identity.tsv, so the pairing evidence is a
+    required output rather than a side effect someone may or may not look at.
+    """
+    if _acc_mode in ("kfold_mask_and_impute", "cross_array"):
+        targets = [
+            _acc_out + "/cv_summary.tsv",
+            _acc_out + "/cv_imputer_summary.tsv",
+            _acc_out + "/snp_reliability.tsv",
+            _acc_out + "/reliable_markers.txt",
+        ]
+        if _acc_mode == "cross_array":
+            targets.append(_acc_out + "/setup/identity.tsv")
+        return targets
+    return [
+        _acc_out + "/summary.tsv",
+        _acc_out + "/metrics_by_maf_bin.tsv",
+        _acc_out + "/metrics_by_snp.tsv",
+        _acc_out + "/metrics_by_individual.tsv",
+    ]
+
+
 rule accuracy_all:
     input:
-        (
-            [
-                _acc_out + "/cv_summary.tsv",
-                _acc_out + "/cv_imputer_summary.tsv",
-            ]
-            if _acc_mode == "kfold_mask_and_impute"
-            else [
-                _acc_out + "/summary.tsv",
-                _acc_out + "/metrics_by_maf_bin.tsv",
-                _acc_out + "/metrics_by_snp.tsv",
-                _acc_out + "/metrics_by_individual.tsv",
-            ]
-        ),
+        _accuracy_targets(),

@@ -4,9 +4,8 @@ Read `AGENTS.md` (symlink to `CLAUDE.md`) for durable architecture and
 conventions. This file is the live state at handover: what works, what does
 not, and where the bodies are buried.
 
-**Handover date:** 2026-08-16
-**Branch:** `fix/fimpute-real-data-invariants` (1 commit ahead of `master`,
-not pushed)
+**Handover date:** 2026-08-18
+**Branch:** `feature/cross-array-kfold`
 
 ---
 
@@ -21,35 +20,52 @@ columns 3–4, and a reference panel:
 | FImpute3 | `fimpute_params.reference_bfile` → chip 1 | uses it | per chromosome |
 | AlphaImpute2 | merge into the input bfile yourself | uses it | whole genome, one thread |
 
-`imputer:` selects the engine and is validated at parse time. 51 tests pass;
-all three DAGs dry-run clean.
+`imputer:` selects the engine and is validated at parse time. 69 tests pass; all
+DAGs dry-run clean, including `cross_array` across all three imputers.
 
-The FImpute path was **not** usable against real two-chip data until the commit
-on this branch. Six separate defects each aborted the whole run. They are listed
-in the commit message and the invariants are now documented in `CLAUDE.md`
-under "What FImpute demands of its inputs". Do not weaken those checks — every
-one of them corresponds to a run that failed.
+The FImpute path was **not** usable against real two-chip data until the
+2026-08-16 work. Six separate defects each aborted the whole run; the invariants
+are documented in `CLAUDE.md` under "What FImpute demands of its inputs". Do not
+weaken those checks — every one of them corresponds to a run that failed.
+
+The fixtures now express the failures that matter. `synth_two_chip` in
+`tests/conftest.py` carries a low- and a high-density fileset over shared
+animals, chip-only markers on both sides, a duplicate physical position, three
+markers with A1/A2 reversed between the chips, and two animals whose two typings
+are deliberately different fish. `synth_raw_counting_a2` is a `.raw` whose
+counted allele is a2, which is what our real exports produce — the old fixtures
+encoded the *same wrong assumption* the production code had, which is how 51
+green tests coexisted with a module that could not complete a single real run.
+
+`cross_array` is now a real mode. It shares the `acc_cv_*` family with
+`kfold_mask_and_impute`, cutting the LD input from one array and the reference
+panel and truth from the other, fold by fold. A held-out fold rather than an
+external panel is not a convenience: practically every Ssa70kv4 fish is also
+V3-typed, so only one V4 fish exists outside the cohort and no external V4 panel
+can be built. `CLAUDE.md` has the construction.
+
+The identity gate runs before fold assignment and is not optional. On the
+two-chip fixture it separates the planted mispairs at 0.29–0.38 concordance from
+everyone else at 0.95–1.0, and a run aborts below
+`cross_array.min_identity_pass_rate`.
+
+`snp_reliability.tsv` / `reliable_markers.txt` are the per-marker output the V4
+panel is chosen from — filtered on each marker's worst fold, and intersected
+across runs when `--root` is passed more than once.
 
 ## What does not work
 
-**`cross_array` accuracy mode is broken.** It hands Beagle the LD fileset with
-no reference panel, so the HD-only markers are absent from the input and there
-is nothing to impute. It has never produced a valid number. `kfold_mask_and_impute`
-already has the missing piece (`acc_cv_make_reference_bfile`); porting it is the
-smallest fix.
+**AlphaImpute2's place in the benchmark is unresolved.** ~12 h per step against
+FImpute's 7 minutes, losing on both accuracy and cost. It is still wired into
+every mode; nobody has decided to drop it.
 
-**No identity gate.** Nothing verifies that an animal's LD and HD genotypes came
-from the same physical sample. On the salmon benchmark this silently ruined a
-whole step — see below.
+**`mask_and_impute` still has no FImpute path.** It now raises instead of
+silently running Beagle under FImpute's name, but the path itself does not
+exist. Use a CV mode.
 
-**The test fixtures cannot catch these bugs.** `tests/conftest.py` builds 12
-animals × 80 SNPs with no duplicate positions, no two-chip setup, and — the
-important part — it encodes the *same wrong assumption* the production code had
-about which allele `plink2 --export A` counts. Fixture and code agreed with each
-other and both disagreed with reality, which is why 51 green tests coexisted with
-a module that could not complete a single real run. One fixture with a duplicate
-position, a two-chip layout, and a `.raw` whose counted allele is a2 would have
-caught three of the six defects.
+**The dataset-preparation scripts still live outside the repo** with hardcoded
+paths — see below. That was deliberately left out of this change: prep is an
+upstream process, not part of the imputation pipeline.
 
 ## The work that lives outside this repo
 
@@ -104,14 +120,29 @@ fish exists outside the cohort, because each array version was used for one
 period and an animal's parents were therefore typed on the *previous* array. It
 needs a held-out-fold reference or it stays out.
 
+## The three truth pairs this was built for
+
+Target: a complete reference panel of V4-genotyped salmon, which needs to know
+which V4 markers impute consistently across datasets.
+
+| Test | Mode | Notes |
+|---|---|---|
+| 50K → V1 | `cross_array` | method benchmark; scores V1 markers. Reproduces the 2026-08 numbers if it is right |
+| V3 → V4 | `cross_array` | scores V4 markers on a real array transition |
+| 50K-masked → V4 | `kfold_mask_and_impute` | `cv.target_snp_list` = the 50K ∩ V4 markers from `scripts/shared_marker_list.py` |
+
+Only the last two score V4 markers, so the reliable-marker list is their
+intersection — pass both output directories to
+`scripts/aggregate_snp_reliability.py --root`.
+
 ## Suggested direction for the next session
 
-1. Fix `cross_array` — it is the mode this benchmark actually needs.
-2. Add the identity gate as a required step of any cross-array mode, not an
-   optional check.
+1. Run all three truth pairs on real data. Nothing here has been through Beagle
+   or FImpute yet: the rules, the identity gate, the splice and the allele
+   orientation are verified on a synthetic two-chip fixture and on plink2, but
+   no imputer has run. Check 50K → V1 against the 2026-08 numbers before
+   trusting anything else.
+2. Sweep `cv.reference_max_animals` to find where accuracy plateaus.
 3. Move the dataset-preparation scripts into `scripts/` and parameterise the
-   base path.
-4. Rebuild the fixtures around the failure modes above.
-5. Decide whether AlphaImpute2 stays in the benchmark; at ~12 h per step against
-   FImpute's 7 minutes it costs two days of wall time for a result that loses on
-   both axes.
+   base path — still the biggest obstacle to this being a reusable tool.
+4. Decide whether AlphaImpute2 stays in the benchmark.

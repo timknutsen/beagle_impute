@@ -119,7 +119,7 @@ snakemake --snakefile Snakefile_accuracy --use-conda --cores 8
 | Mode | Purpose |
 |------|---------|
 | `mask_and_impute` | Hold out one validation set, mask it to LD density, impute, and compare to truth |
-| `cross_array` | Compare a real low-density array against a real high-density array for the same animals |
+| `cross_array` | Compare a real low-density array against a real high-density array for the same animals, scored K-fold and identity-gated |
 | `kfold_mask_and_impute` | Run K-fold animal CV from a shared LD marker panel to full density |
 
 For the 10k-to-full benchmark requested for real data, use:
@@ -153,6 +153,75 @@ roughly `n_panel / n_total` (on a 50K chip with a 10k panel, about a fifth of
 all markers). The same exclusion applies to `mask_and_impute` and, for the
 overlap between the two arrays, to `cross_array`.
 
+### `cross_array`
+
+The same animals on two arrays, scored K-fold: each fold contributes its real
+low-density typings, and the other folds' high-density genotypes are the
+reference panel. A held-out fold rather than an external panel is what makes
+the mode work at all when nearly every high-density animal is already in the
+cohort — on the salmon arrays exactly one Ssa70kv4 fish exists outside it.
+
+The LD panel is not sampled here: it is exactly the markers both arrays carry.
+
+```bash
+snakemake --snakefile Snakefile_accuracy --use-conda --cores 8 \
+  --config accuracy_mode=cross_array \
+           accuracy_output_dir=accuracy_v3_to_v4 \
+           cross_array_ld_bfile=/path/to/Ssa70kv3 \
+           cross_array_hd_bfile=/path/to/Ssa70kv4 \
+           cv_n_folds=5 \
+           cv_imputers="beagle fimpute"
+```
+
+**An identity gate runs before anything is scored, and is not optional.**
+Pairing an animal's two typings on its ID assumes both came from one fish; when
+an ID covers two physical samples the pair is two unrelated animals and the run
+scores an imputation that never had a chance. Concordance between the arrays at
+their shared markers separates the cases cleanly — the same animal lands at
+0.95–1.0, two different fish near 0.5 — so `cross_array.identity_threshold`
+(default 0.90) sits in an empty gap. Failures land in
+`setup/identity_fail.ids`; the run aborts entirely below
+`cross_array.min_identity_pass_rate`.
+
+To mask a high-density cohort down to a real lower-density array instead of a
+random thinning — e.g. V4 fish downsampled to the 50K markers — build the panel
+first and hand it to `kfold_mask_and_impute`:
+
+```bash
+python scripts/shared_marker_list.py \
+  --bim /path/to/Ssa50kv1.bim /path/to/Ssa70kv4.bim \
+  --out 50k_v4_shared.txt
+
+snakemake --snakefile Snakefile_accuracy --use-conda --cores 8 \
+  --config accuracy_mode=kfold_mask_and_impute \
+           bfile=/path/to/Ssa70kv4 \
+           cv_target_snp_list=50k_v4_shared.txt
+```
+
+### Which markers impute reliably
+
+Both CV modes write `snp_reliability.tsv` and `reliable_markers.txt`. A marker
+qualifies on its **worst** fold, not its mean — one collapsed fold out of five
+is exactly what a mean hides. Passing `--root` more than once intersects runs,
+so a marker earns its place only by holding up in every test it was part of:
+
+```bash
+python scripts/aggregate_snp_reliability.py \
+  --root accuracy_v3_to_v4 accuracy_50k_masked_v4 \
+  --imputers beagle fimpute --folds 1 2 3 4 5 \
+  --bim /path/to/Ssa70kv4.bim \
+  --out v4_snp_reliability.tsv --reliable-out v4_reliable_markers.txt
+```
+
+### QC is expected upstream
+
+The pipeline does not filter genotypes. Bfiles handed to any accuracy mode
+should already be QC'd **per chip, before merging or pairing** — genotype status
+`OK`, `--geno`, `--maf`, and `--hwe <p> <k> midp keep-fewhet`. Run that QC
+before writing the pedigree into `.fam` (plink2's `--hwe` considers founders
+only), and apply sample-missingness exclusions to both arrays so the pairing
+survives.
+
 Command-line overrides use flat names because Snakemake does not accept dotted
 keys in `--config`:
 
@@ -174,6 +243,8 @@ CV outputs:
 - `accuracy_cv/{imputer}/fold{n}/metrics_by_snp.tsv`
 - `accuracy_cv/{imputer}/fold{n}/metrics_by_maf_bin.tsv`
 - `accuracy_cv/{imputer}/fold{n}/metrics_by_individual.tsv`
+- `accuracy_cv/snp_reliability.tsv` and `accuracy_cv/reliable_markers.txt`
+- `cross_array` also writes `setup/identity.tsv` and `setup/identity_fail.ids`
 
 ## 7. Testing
 
@@ -201,6 +272,7 @@ pip install pytest && pytest
 | `test_convert.py` (`TestConvertRoundtrip`) | Full `convert()` call: bgzipped VCF content, REF/ALT allele direction, GT strings, tabix index creation, mismatch error | `bgzip`, `tabix` (htslib) |
 | `test_dryrun.py` | Snakemake DAG validation for Beagle (no ref), Beagle (with ref), and AlphaImpute2 modes — confirms rules resolve without executing anything | `snakemake` |
 | `test_accuracy_cv.py` | Ten-fold CV setup, FImpute I/O helpers, CV aggregation, and CV Snakemake dry-run | `snakemake` for dry-run only |
+| `test_cross_array.py` | Cross-array pairing, the shared marker panel, the identity gate, allele orientation, the LD splice, marker reliability, and the `cross_array` dry-run | `snakemake` for dry-run only |
 
 Tests that require missing tools are **automatically skipped** with a clear reason — they never fail due to a missing binary.
 
@@ -273,6 +345,11 @@ Setting `bref3_jar` causes the pipeline to convert the reference VCF to bref3 bi
 - `scripts/make_accuracy_cv_setup.py`: Creates deterministic CV folds and LD SNP panels
 - `scripts/fimpute_io.py`: Converts PLINK raw exports to FImpute input files and FImpute output to VCF
 - `scripts/aggregate_cv_metrics.py`: Aggregates per-fold CV summary metrics
+- `scripts/aggregate_snp_reliability.py`: Per-marker R² across folds and runs; writes the reliable-marker list
+- `scripts/shared_marker_list.py`: Intersects two or more `.bim` files into a marker list
+- `scripts/pair_animals.py`: Matches animals across two arrays on individual ID
+- `scripts/identity_gate.py`: Turns LD-vs-HD concordance into the animal list a cross-array run uses
+- `scripts/mask_validation_genotypes.py`: Masks genotypes outside an LD panel; `--replace-from` splices a second array's calls in
 
 ## Environments
 - `envs/workflow_env.yaml`: Main pipeline dependencies

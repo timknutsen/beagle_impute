@@ -8,8 +8,8 @@
 #                         acc_make_truth_bfile, acc_make_masked_ld_bfile,
 #                         (+ acc_make_reference_panel, acc_merge_for_alphaimpute2
 #                            when imputer=alphaimpute2)
-#      cross_array      → acc_find_common_animals, acc_make_ld_subset,
-#                         acc_make_hd_truth
+#      kfold_mask_and_impute / cross_array
+#                       → the shared acc_cv_* family; see the note above it
 #
 #   2. Shared imputation rules
 #      Beagle path      → acc_make_per_chrom_vcf, acc_normalize_vcf,
@@ -28,14 +28,34 @@ _acc_mode         = config.get("accuracy_mode", "mask_and_impute")
 _acc_out          = config.get("accuracy_output_dir", "accuracy_output")
 _use_alphaimpute2 = config.get("imputer", "beagle") == "alphaimpute2"
 
+# The mask_and_impute rules only ever branch Beagle vs AlphaImpute2, so an
+# imputer they do not know about would run as Beagle and report the result
+# under the wrong name. FImpute is reachable through the two CV modes, which
+# select the engine per fold from cv.imputers.
+if _acc_mode == "mask_and_impute" and config.get("imputer", "beagle") == "fimpute":
+    raise ValueError(
+        "accuracy_mode: mask_and_impute has no FImpute path. Use "
+        "accuracy_mode: kfold_mask_and_impute (or cross_array) with "
+        "cv.imputers including fimpute."
+    )
+
 
 def _nested_config(section, key, default=None):
-    """Support both YAML nested config and Snakemake --config section.key=value."""
-    if isinstance(config.get(section), dict) and key in config[section]:
-        return config[section][key]
+    """Resolve a setting from --config first, then the YAML block, then a default.
+
+    Snakemake rejects dotted keys on --config, so a nested setting is overridden
+    from the CLI through a flat alias (cv_n_folds=2). That alias has to be
+    checked *before* the YAML block: config_accuracy.yaml defines every cv.* key,
+    so looking at the block first meant a CLI override was accepted, ignored,
+    and the run silently used the YAML value instead.
+    """
     if f"{section}_{key}" in config:
         return config[f"{section}_{key}"]
-    return config.get(f"{section}.{key}", default)
+    if f"{section}.{key}" in config:
+        return config[f"{section}.{key}"]
+    if isinstance(config.get(section), dict) and key in config[section]:
+        return config[section][key]
+    return default
 
 
 def _as_list(value, default):
@@ -67,6 +87,49 @@ _fimpute_executable = _nested_config(
 _fimpute_nthreads = int(_nested_config("fimpute_params", "nthreads", 1))
 
 
+_cv_identity_threshold = float(_nested_config("cross_array", "identity_threshold", 0.90))
+_cv_min_pass_rate = float(_nested_config("cross_array", "min_identity_pass_rate", 0.5))
+_cv_min_shared_markers = int(_nested_config("cross_array", "min_shared_markers", 100))
+_cv_reference_max_animals = int(_nested_config("cv", "reference_max_animals", 0))
+_cv_reliable_r2 = float(_nested_config("cv", "reliable_r2_threshold", 0.90))
+
+# Both CV modes run the same rule family. They differ only in where each
+# per-fold fileset is cut from:
+#
+#   masked LD input   the array the held-out animals were typed on
+#   reference panel   the high-density array, minus the held-out fold
+#   truth             the high-density array, held-out fold, panel removed
+#
+# In kfold_mask_and_impute both sources are the one bfile, so the LD input is
+# that same fileset thinned to the panel. In cross_array they are two real
+# arrays, which is the only construction in which a V3 -> V4 test can run at
+# all: practically every V4 fish is also V3-typed, so no external V4 panel
+# exists to hold out.
+_cv_cross = _acc_mode == "cross_array"
+if _cv_cross:
+    _cv_ld_bfile = _nested_config("cross_array", "ld_bfile", "")
+    _cv_hd_bfile = _nested_config("cross_array", "hd_bfile", "")
+    if not str(_cv_ld_bfile).strip() or not str(_cv_hd_bfile).strip():
+        raise ValueError(
+            "accuracy_mode: cross_array needs both cross_array.ld_bfile and "
+            "cross_array.hd_bfile (or the flat aliases cross_array_ld_bfile= "
+            "and cross_array_hd_bfile=)."
+        )
+else:
+    _cv_ld_bfile = config["bfile"]
+    _cv_hd_bfile = config["bfile"]
+
+# The LD panel is fixed by the two arrays in cross_array -- it is exactly the
+# markers both carry -- so acc_cv_setup is handed that list instead of sampling
+# one. Everything downstream reads setup/ld_snp_list.txt either way.
+_cv_setup_snp_list = (
+    _acc_out + "/setup/shared_snps.txt" if _cv_cross else _cv_target_snp_list
+)
+_cv_setup_fam = (
+    _acc_out + "/setup/animals.txt" if _cv_cross else config["bfile"] + ".fam"
+)
+
+
 def _cv_prefix(imputer, fold, stem):
     return f"{_acc_out}/{imputer}/fold{fold}/{stem}"
 
@@ -86,16 +149,181 @@ def _cv_truth_vcf(wc):
 
 
 # ---------------------------------------------------------------------------
-# Mode: kfold_mask_and_impute
+# Modes: kfold_mask_and_impute and cross_array
 # ---------------------------------------------------------------------------
 
-if _acc_mode == "kfold_mask_and_impute":
+if _acc_mode in ("kfold_mask_and_impute", "cross_array"):
+
+    # Fold numbers are digits and imputers are named engines. Without this,
+    # setup/fold{fold}_ids.txt also matches setup/fold1_reference_ids.txt with
+    # fold="1_reference", and the two rules collide.
+    wildcard_constraints:
+        fold = r"\d+",
+        imputer = "|".join(_cv_imputers) if _cv_imputers else r"[A-Za-z0-9_]+",
+
+    if _cv_cross:
+
+        rule acc_cv_pair_animals:
+            """Animals carried by both arrays, matched on individual ID."""
+            input:
+                ld_fam = _cv_ld_bfile + ".fam",
+                hd_fam = _cv_hd_bfile + ".fam",
+            output:
+                pairs = _acc_out + "/setup/paired_ids.txt",
+            conda:
+                "../envs/workflow_env.yaml"
+            log:
+                "logs/accuracy_cv/pair_animals.log",
+            shell:
+                """
+                python {workflow.basedir}/scripts/pair_animals.py \
+                    --ld-fam {input.ld_fam} \
+                    --hd-fam {input.hd_fam} \
+                    --out {output.pairs} \
+                    &> {log}
+                """
+
+        rule acc_cv_shared_markers:
+            """
+            The markers both arrays carry -- the LD panel, and nothing else.
+
+            Forcing the panel to be LD n HD does two jobs at once. An LD-only
+            probe would be handed to the imputer as an observed genotype and
+            then never scored, because the truth fileset does not contain it;
+            and an HD marker absent from LD is exactly what the run is meant to
+            recover.
+            """
+            input:
+                ld_bim = _cv_ld_bfile + ".bim",
+                hd_bim = _cv_hd_bfile + ".bim",
+            output:
+                snps = _acc_out + "/setup/shared_snps.txt",
+            conda:
+                "../envs/workflow_env.yaml"
+            params:
+                min_shared = _cv_min_shared_markers,
+            log:
+                "logs/accuracy_cv/shared_markers.log",
+            shell:
+                """
+                python {workflow.basedir}/scripts/shared_marker_list.py \
+                    --bim {input.ld_bim} {input.hd_bim} \
+                    --out {output.snps} \
+                    --min-shared {params.min_shared} \
+                    &> {log}
+                """
+
+        rule acc_cv_identity_export:
+            """Both arrays cut to the shared markers, ready for a direct comparison."""
+            input:
+                bed  = lambda wc: (_cv_ld_bfile if wc.side == "ld" else _cv_hd_bfile) + ".bed",
+                ids  = _acc_out + "/setup/paired_ids.txt",
+                snps = _acc_out + "/setup/shared_snps.txt",
+            output:
+                vcf = temp(_acc_out + "/setup/identity/{side}.vcf.gz"),
+                tbi = temp(_acc_out + "/setup/identity/{side}.vcf.gz.tbi"),
+            wildcard_constraints:
+                side = "ld|hd",
+            params:
+                plink = config["plink_path"],
+                bfile = lambda wc: _cv_ld_bfile if wc.side == "ld" else _cv_hd_bfile,
+                out   = lambda wc: f"{_acc_out}/setup/identity/{wc.side}_raw",
+                extra = config.get("plink_extra_flags", ""),
+            conda:
+                "../envs/workflow_env.yaml"
+            log:
+                "logs/accuracy_cv/identity_export_{side}.log",
+            shell:
+                """
+                ({params.plink} \
+                    --bfile {params.bfile} \
+                    --keep {input.ids} \
+                    --extract {input.snps} \
+                    --snps-only \
+                    --export vcf bgz id-paste=iid \
+                    --out {params.out} \
+                    --nonfounders --allow-no-sex {params.extra}) &> {log}
+                bcftools norm -d snps {params.out}.vcf.gz 2>> {log} | bgzip > {output.vcf}
+                tabix -f -p vcf {output.vcf}
+                rm -f {params.out}.vcf.gz
+                """
+
+        rule acc_cv_identity_metrics:
+            """LD-vs-HD concordance per animal, at the markers both arrays measured."""
+            input:
+                ld = _acc_out + "/setup/identity/ld.vcf.gz",
+                hd = _acc_out + "/setup/identity/hd.vcf.gz",
+                # compute_accuracy_metrics.py reaches the VCFs through
+                # "bcftools view -R", which needs the index. The .tbi files are
+                # temp(), so without naming them here Snakemake deletes them as
+                # soon as the export job finishes and this rule reads an
+                # unindexed file.
+                ld_tbi = _acc_out + "/setup/identity/ld.vcf.gz.tbi",
+                hd_tbi = _acc_out + "/setup/identity/hd.vcf.gz.tbi",
+            output:
+                by_indiv = _acc_out + "/setup/identity/metrics_by_individual.tsv",
+            params:
+                out_dir = _acc_out + "/setup/identity",
+            conda:
+                "../envs/accuracy_env.yaml"
+            # This one compares the *whole* paired cohort at every shared
+            # marker, so it is the largest single matrix in the run -- bigger
+            # than any per-fold comparison.
+            resources:
+                mem_mb = 32000,
+                slurm_partition = "r7i-ondemand-2xlarge",
+            log:
+                "logs/accuracy_cv/identity_metrics.log",
+            shell:
+                """
+                python {workflow.basedir}/scripts/compute_accuracy_metrics.py \
+                    --imputed {input.ld} \
+                    --truth {input.hd} \
+                    --out-dir {params.out_dir} \
+                    &> {log}
+                """
+
+        rule acc_cv_identity_gate:
+            """
+            Drop animals whose two typings are not the same physical fish.
+
+            Mandatory, not a report. On the 2026-08 salmon benchmark 974 of
+            3,881 animals in one step had LD and HD genotypes from different
+            fish; the step scored mean R2 0.53 and looked like a result.
+            """
+            input:
+                pairs   = _acc_out + "/setup/paired_ids.txt",
+                metrics = _acc_out + "/setup/identity/metrics_by_individual.tsv",
+            output:
+                identity = _acc_out + "/setup/identity.tsv",
+                failed   = _acc_out + "/setup/identity_fail.ids",
+                animals  = _acc_out + "/setup/animals.txt",
+            params:
+                threshold     = _cv_identity_threshold,
+                min_pass_rate = _cv_min_pass_rate,
+            conda:
+                "../envs/accuracy_env.yaml"
+            log:
+                "logs/accuracy_cv/identity_gate.log",
+            shell:
+                """
+                python {workflow.basedir}/scripts/identity_gate.py \
+                    --pairs {input.pairs} \
+                    --metrics {input.metrics} \
+                    --threshold {params.threshold} \
+                    --min-pass-rate {params.min_pass_rate} \
+                    --identity-out {output.identity} \
+                    --fail-out {output.failed} \
+                    --keep-out {output.animals} \
+                    &> {log}
+                """
 
     rule acc_cv_setup:
         """Create the shared fold assignment and LD marker panel."""
         input:
-            fam = config["bfile"] + ".fam",
-            bim = config["bfile"] + ".bim",
+            fam = _cv_setup_fam,
+            bim = _cv_hd_bfile + ".bim",
+            snp_list = ([_acc_out + "/setup/shared_snps.txt"] if _cv_cross else []),
         output:
             folds = _acc_out + "/setup/folds.tsv",
             snps  = _acc_out + "/setup/ld_snp_list.txt",
@@ -103,7 +331,7 @@ if _acc_mode == "kfold_mask_and_impute":
             n_folds = _cv_n_folds,
             n_snps  = _cv_target_n_snps,
             seed    = _cv_seed,
-            snp_list = _cv_target_snp_list,
+            snp_list = _cv_setup_snp_list,
         conda:
             "../envs/workflow_env.yaml"
         log:
@@ -146,7 +374,7 @@ if _acc_mode == "kfold_mask_and_impute":
         imputer actually had to recover.
         """
         input:
-            bed  = config["bfile"] + ".bed",
+            bed  = _cv_hd_bfile + ".bed",
             ids  = _acc_out + "/setup/fold{fold}_ids.txt",
             snps = _acc_out + "/setup/ld_snp_list.txt",
         output:
@@ -155,7 +383,7 @@ if _acc_mode == "kfold_mask_and_impute":
             fam = _acc_out + "/{imputer}/fold{fold}/truth/hd.fam",
         params:
             plink = config["plink_path"],
-            bfile = config["bfile"],
+            bfile = _cv_hd_bfile,
             out   = lambda wc: _cv_prefix(wc.imputer, wc.fold, "truth/hd"),
             extra = config.get("plink_extra_flags", ""),
         conda:
@@ -174,19 +402,35 @@ if _acc_mode == "kfold_mask_and_impute":
             """
 
     rule acc_cv_make_masked_ld_bfile:
+        """
+        The held-out animals as the imputer will see them: LD density only.
+
+        In cross_array these are the animals' real low-density typings, and the
+        allele coding is forced onto the HD .bim. Two exports of the same
+        marker can disagree about which allele is A1, and nothing downstream
+        notices: an allele flip leaves allelic r2 looking reasonable, because
+        squaring the correlation hides the sign, and surfaces only as collapsed
+        concordance. plink2 refuses outright if an HD allele is absent from the
+        LD marker, which is the loud failure that case deserves.
+        """
         input:
-            bed  = config["bfile"] + ".bed",
+            bed  = _cv_ld_bfile + ".bed",
             ids  = _acc_out + "/setup/fold{fold}_ids.txt",
             snps = _acc_out + "/setup/ld_snp_list.txt",
+            hd_bim = ([_cv_hd_bfile + ".bim"] if _cv_cross else []),
         output:
             bed = _acc_out + "/{imputer}/fold{fold}/to_impute/masked.bed",
             bim = _acc_out + "/{imputer}/fold{fold}/to_impute/masked.bim",
             fam = _acc_out + "/{imputer}/fold{fold}/to_impute/masked.fam",
         params:
             plink = config["plink_path"],
-            bfile = config["bfile"],
+            bfile = _cv_ld_bfile,
             out   = lambda wc: _cv_prefix(wc.imputer, wc.fold, "to_impute/masked"),
             extra = config.get("plink_extra_flags", ""),
+            # Column 6 of a .bim is A2, column 2 the marker ID.
+            orient = (
+                f"--ref-allele force {_cv_hd_bfile}.bim 6 2" if _cv_cross else ""
+            ),
         conda:
             "../envs/workflow_env.yaml"
         log:
@@ -197,22 +441,51 @@ if _acc_mode == "kfold_mask_and_impute":
                 --bfile {params.bfile} \
                 --keep {input.ids} \
                 --extract {input.snps} \
+                {params.orient} \
                 --make-bed \
                 --out {params.out} \
                 --nonfounders --allow-no-sex {params.extra}) &> {log}
             """
 
-    rule acc_cv_make_reference_bfile:
+    rule acc_cv_reference_ids:
+        """
+        Trim the reference panel to a fixed size, when a size is asked for.
+
+        Panel size is the axis worth sweeping: accuracy climbs with it and then
+        plateaus, and past the plateau the panel is only costing compute. Every
+        fold draws from the same seed, so a size is comparable across folds and
+        across truth pairs. cv.reference_max_animals = 0 keeps everyone.
+        """
         input:
-            bed = config["bfile"] + ".bed",
-            ids = _acc_out + "/setup/fold{fold}_ids.txt",
+            folds = _acc_out + "/setup/folds.tsv",
+        output:
+            ids = _acc_out + "/setup/fold{fold}_reference_ids.txt",
+        params:
+            max_animals = _cv_reference_max_animals,
+            seed = _cv_seed,
+        run:
+            import pandas as pd
+
+            folds = pd.read_csv(input.folds, sep="\t")
+            panel = folds.loc[folds["fold"] != int(wildcards.fold), ["fid", "iid"]]
+            if params.max_animals and len(panel) > params.max_animals:
+                panel = panel.sample(
+                    n=params.max_animals, random_state=params.seed
+                ).sort_values(["fid", "iid"])
+            panel.to_csv(output.ids, sep="\t", header=False, index=False)
+
+    rule acc_cv_make_reference_bfile:
+        """The other folds at full density -- the panel the imputer draws haplotypes from."""
+        input:
+            bed = _cv_hd_bfile + ".bed",
+            ids = _acc_out + "/setup/fold{fold}_reference_ids.txt",
         output:
             bed = _acc_out + "/{imputer}/fold{fold}/reference/panel.bed",
             bim = _acc_out + "/{imputer}/fold{fold}/reference/panel.bim",
             fam = _acc_out + "/{imputer}/fold{fold}/reference/panel.fam",
         params:
             plink = config["plink_path"],
-            bfile = config["bfile"],
+            bfile = _cv_hd_bfile,
             out   = lambda wc: _cv_prefix(wc.imputer, wc.fold, "reference/panel"),
             extra = config.get("plink_extra_flags", ""),
         conda:
@@ -223,26 +496,40 @@ if _acc_mode == "kfold_mask_and_impute":
             """
             ({params.plink} \
                 --bfile {params.bfile} \
-                --remove {input.ids} \
+                --keep {input.ids} \
                 --make-bed \
                 --out {params.out} \
                 --nonfounders --allow-no-sex {params.extra}) &> {log}
             """
 
     rule acc_cv_make_combined_masked_bfile:
+        """
+        One fileset holding the held-out fold at LD density and everyone else at HD.
+
+        FImpute and AlphaImpute2 take a single input rather than a separate
+        panel, so the panel has to be folded in. plink2's --pmerge is
+        unfinished, hence the byte-level rewrite.
+
+        In cross_array the held-out animals' panel genotypes are spliced in
+        from the array they were really typed on. Leaving the HD array's own
+        calls there would delete the array-transition effect the run exists to
+        measure and quietly turn it into a masking test.
+        """
         input:
-            bed  = config["bfile"] + ".bed",
-            bim  = config["bfile"] + ".bim",
-            fam  = config["bfile"] + ".fam",
+            bed  = _cv_hd_bfile + ".bed",
+            bim  = _cv_hd_bfile + ".bim",
+            fam  = _cv_hd_bfile + ".fam",
             ids  = _acc_out + "/setup/fold{fold}_ids.txt",
             snps = _acc_out + "/setup/ld_snp_list.txt",
+            ld   = ([_cv_ld_bfile + ".bed"] if _cv_cross else []),
         output:
             bed = _acc_out + "/{imputer}/fold{fold}/to_impute/combined.bed",
             bim = _acc_out + "/{imputer}/fold{fold}/to_impute/combined.bim",
             fam = _acc_out + "/{imputer}/fold{fold}/to_impute/combined.fam",
         params:
-            bfile = config["bfile"],
+            bfile = _cv_hd_bfile,
             out   = lambda wc: _cv_prefix(wc.imputer, wc.fold, "to_impute/combined"),
+            replace = f"--replace-from {_cv_ld_bfile}" if _cv_cross else "",
         conda:
             "../envs/workflow_env.yaml"
         log:
@@ -253,6 +540,7 @@ if _acc_mode == "kfold_mask_and_impute":
                 --bfile {params.bfile} \
                 --validation-ids {input.ids} \
                 --ld-snps {input.snps} \
+                {params.replace} \
                 --out {params.out} \
                 &> {log}
             """
@@ -650,6 +938,12 @@ if _acc_mode == "kfold_mask_and_impute":
         output:
             imp = _acc_out + "/fimpute/fold{fold}/fimpute_input/chr{chrom}/genotypes_imp.txt",
             report = _acc_out + "/fimpute/fold{fold}/fimpute_input/chr{chrom}/report.txt",
+            # FImpute drops markers of its own accord and rewrites the SNP map
+            # for what it kept -- a marker carried only by the target chip is
+            # logged in excluded_snp_list.txt as "Not On HD". Read back this
+            # file, not the .snps handed in, or the genotype string and the map
+            # disagree by however many it removed. Mirrors rules/fimpute.smk.
+            snpinfo = _acc_out + "/fimpute/fold{fold}/fimpute_input/chr{chrom}/snp_info.txt",
         params:
             exe = _fimpute_executable,
         threads:
@@ -668,6 +962,7 @@ if _acc_mode == "kfold_mask_and_impute":
         input:
             imp   = _acc_out + "/fimpute/fold{fold}/fimpute_input/chr{chrom}/genotypes_imp.txt",
             bim   = _acc_out + "/fimpute/fold{fold}/chrom/chr{chrom}.bim",
+            snps  = _acc_out + "/fimpute/fold{fold}/fimpute_input/chr{chrom}/snp_info.txt",
             idmap = _acc_out + "/fimpute/fold{fold}/fimpute_input/chr{chrom}.id_map.tsv",
         output:
             vcf = temp(_acc_out + "/fimpute/fold{fold}/fimpute/chr{chrom}.vcf.gz"),
@@ -681,6 +976,7 @@ if _acc_mode == "kfold_mask_and_impute":
             python {workflow.basedir}/scripts/fimpute_io.py to-vcf \
                 --imputed {input.imp} \
                 --bim {input.bim} \
+                --snp-info {input.snps} \
                 --id-map {input.idmap} \
                 --out-vcf {output.vcf}.tmp \
                 &> {log}
@@ -767,6 +1063,48 @@ if _acc_mode == "kfold_mask_and_impute":
                 --folds {params.folds} \
                 --summary-out {output.summary} \
                 --imputer-summary-out {output.imputer_summary} \
+                &> {log}
+            """
+
+    rule acc_cv_snp_reliability:
+        """
+        Per-marker accuracy across folds -- the table the reference panel is picked from.
+
+        compute_accuracy_metrics.py has always written metrics_by_snp.tsv per
+        fold and nothing has ever read it; cv_summary.tsv aggregates only the
+        run-level numbers. Markers are filtered on their worst fold rather than
+        their mean, because a marker that collapses in one fold out of five is
+        not one to build a panel on.
+        """
+        input:
+            by_snp = expand(
+                _acc_out + "/{imputer}/fold{fold}/metrics_by_snp.tsv",
+                imputer=_cv_imputers,
+                fold=_cv_folds,
+            ),
+            bim = _cv_hd_bfile + ".bim",
+        output:
+            table    = _acc_out + "/snp_reliability.tsv",
+            reliable = _acc_out + "/reliable_markers.txt",
+        params:
+            imputers  = " ".join(_cv_imputers),
+            folds     = " ".join(str(fold) for fold in _cv_folds),
+            root      = _acc_out,
+            threshold = _cv_reliable_r2,
+        conda:
+            "../envs/accuracy_env.yaml"
+        log:
+            "logs/accuracy_cv/snp_reliability.log",
+        shell:
+            """
+            python {workflow.basedir}/scripts/aggregate_snp_reliability.py \
+                --root {params.root} \
+                --imputers {params.imputers} \
+                --folds {params.folds} \
+                --bim {input.bim} \
+                --r2-threshold {params.threshold} \
+                --out {output.table} \
+                --reliable-out {output.reliable} \
                 &> {log}
             """
 
@@ -983,129 +1321,6 @@ elif _acc_mode == "mask_and_impute":
         _impute_bfile = _acc_out + "/to_impute/masked"
 
     _truth_bfile = _acc_out + "/truth/hd"
-
-# ---------------------------------------------------------------------------
-# Mode: cross_array
-# ---------------------------------------------------------------------------
-
-elif _acc_mode == "cross_array":
-
-    rule acc_find_common_animals:
-        """
-        Intersect .fam files to identify animals present on both arrays.
-        Only common animals are used so the comparison is fair.
-        """
-        input:
-            ld_fam = config["cross_array"]["ld_bfile"] + ".fam",
-            hd_fam = config["cross_array"]["hd_bfile"] + ".fam",
-        output:
-            ids = _acc_out + "/setup/common_ids.txt",
-        run:
-            import pandas as pd
-
-            ld = pd.read_csv(
-                input.ld_fam, sep=r"\s+", header=None,
-                names=["fid", "iid", "pid", "mid", "sex", "phen"],
-            )
-            hd = pd.read_csv(
-                input.hd_fam, sep=r"\s+", header=None,
-                names=["fid", "iid", "pid", "mid", "sex", "phen"],
-            )
-            common = pd.merge(ld[["fid", "iid"]], hd[["fid", "iid"]], on=["fid", "iid"])
-            n_ld, n_hd = len(ld), len(hd)
-            print(
-                f"LD animals: {n_ld}  HD animals: {n_hd}  "
-                f"Common: {len(common)}"
-            )
-            if len(common) == 0:
-                raise ValueError(
-                    "No animals in common between LD and HD bfiles. "
-                    "Check that IIDs match across the two datasets."
-                )
-            common.to_csv(output.ids, sep="\t", header=False, index=False)
-
-    rule acc_make_ld_subset:
-        """Low-density array, common animals only — imputation input."""
-        input:
-            bed = config["cross_array"]["ld_bfile"] + ".bed",
-            ids = _acc_out + "/setup/common_ids.txt",
-        output:
-            bed = _acc_out + "/to_impute/ld.bed",
-            bim = _acc_out + "/to_impute/ld.bim",
-            fam = _acc_out + "/to_impute/ld.fam",
-        params:
-            plink = config["plink_path"],
-            bfile = config["cross_array"]["ld_bfile"],
-            out   = _acc_out + "/to_impute/ld",
-            extra = config.get("plink_extra_flags", ""),
-        conda:
-            "../envs/workflow_env.yaml"
-        log:
-            "logs/accuracy/make_ld_subset.log",
-        shell:
-            """
-            ({params.plink} \
-                --bfile {params.bfile} \
-                --keep  {input.ids} \
-                --make-bed \
-                --out   {params.out} \
-                --nonfounders --allow-no-sex {params.extra}) &> {log}
-            """
-
-    rule acc_ld_marker_list:
-        """
-        Marker IDs carried by the low-density array.
-
-        These are observed rather than imputed, so they are excluded from the
-        high-density truth below to keep the metrics on imputed markers only.
-        """
-        input:
-            bim = config["cross_array"]["ld_bfile"] + ".bim",
-        output:
-            snps = _acc_out + "/setup/ld_marker_list.txt",
-        run:
-            import pandas as pd
-
-            bim = pd.read_csv(input.bim, sep=r"\s+", header=None)
-            bim[1].to_csv(output.snps, header=False, index=False)
-
-    rule acc_make_hd_truth:
-        """
-        High-density array, common animals, LD-array markers removed — the truth.
-
-        Markers present on both arrays were genotyped, not imputed. Scoring
-        them would inflate accuracy by the overlap's share of the HD array.
-        """
-        input:
-            bed  = config["cross_array"]["hd_bfile"] + ".bed",
-            ids  = _acc_out + "/setup/common_ids.txt",
-            snps = _acc_out + "/setup/ld_marker_list.txt",
-        output:
-            bed = _acc_out + "/truth/hd.bed",
-            bim = _acc_out + "/truth/hd.bim",
-            fam = _acc_out + "/truth/hd.fam",
-        params:
-            plink = config["plink_path"],
-            bfile = config["cross_array"]["hd_bfile"],
-            out   = _acc_out + "/truth/hd",
-            extra = config.get("plink_extra_flags", ""),
-        conda:
-            "../envs/workflow_env.yaml"
-        log:
-            "logs/accuracy/make_hd_truth.log",
-        shell:
-            """
-            ({params.plink} \
-                --bfile {params.bfile} \
-                --keep    {input.ids} \
-                --exclude {input.snps} \
-                --make-bed \
-                --out   {params.out} \
-                --nonfounders --allow-no-sex {params.extra}) &> {log}
-            """
-
-    _impute_bfile = _acc_out + "/to_impute/ld"
-    _truth_bfile  = _acc_out + "/truth/hd"
 
 else:
     raise ValueError(
