@@ -51,7 +51,7 @@ rule fimpute_chrom_bfile:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/fimpute_chrom_chr{chrom}.log",
+        _log + "fimpute_chrom_chr{chrom}.log",
     shell:
         """
         ({params.plink} \
@@ -80,7 +80,7 @@ rule fimpute_export_raw:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/fimpute_export_raw_chr{chrom}.log",
+        _log + "fimpute_export_raw_chr{chrom}.log",
     shell:
         """
         ({params.plink} \
@@ -116,7 +116,7 @@ if _fim_use_ref:
         conda:
             "../envs/workflow_env.yaml"
         log:
-            "logs/fimpute_ref_chrom_chr{chrom}.log",
+            _log + "fimpute_ref_chrom_chr{chrom}.log",
         shell:
             """
             ({params.plink} \
@@ -140,7 +140,7 @@ if _fim_use_ref:
         conda:
             "../envs/workflow_env.yaml"
         log:
-            "logs/fimpute_ref_export_raw_chr{chrom}.log",
+            _log + "fimpute_ref_export_raw_chr{chrom}.log",
         shell:
             """
             ({params.plink} \
@@ -186,7 +186,7 @@ rule fimpute_prepare_inputs:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/fimpute_prepare_chr{chrom}.log",
+        _log + "fimpute_prepare_chr{chrom}.log",
     shell:
         """
         python {workflow.basedir}/scripts/fimpute_io.py prepare-inputs \
@@ -224,7 +224,7 @@ rule run_fimpute:
     threads:
         _fimpute_nthreads
     log:
-        "logs/fimpute_run_chr{chrom}.log",
+        _log + "fimpute_run_chr{chrom}.log",
     resources:
         mem_mb = 32000,
         slurm_partition = "r7i-ondemand-2xlarge",
@@ -269,7 +269,7 @@ rule fimpute_to_vcf:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/fimpute_to_vcf_chr{chrom}.log",
+        _log + "fimpute_to_vcf_chr{chrom}.log",
     shell:
         """
         (python {workflow.basedir}/scripts/fimpute_io.py to-vcf \
@@ -306,7 +306,7 @@ rule concat_fimpute:
         "../envs/workflow_env.yaml"
     threads: 4
     log:
-        "logs/fimpute_concat.log",
+        _log + "fimpute_concat.log",
     resources:
         mem_mb = 64000,
         slurm_partition = "r7i-ondemand-4xlarge",

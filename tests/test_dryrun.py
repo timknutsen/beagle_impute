@@ -173,6 +173,32 @@ class TestBeagleDryrun:
         )
         assert result.returncode == 0, result.stdout + result.stderr
 
+    def test_per_chromosome_reference_template_reaches_beagle(self, tmp_path):
+        """
+        reference_vcf=.../chr{chrom}.vcf.gz is how a Snakefile_refpanel panel is
+        used. bcftools_isec and conform_gt resolved the template, but run_beagle
+        passed it to Beagle verbatim -- ref=.../chr{chrom}.vcf.gz -- and Beagle
+        aborted with "File does not exist".
+        """
+        for chrom in ("1", "2", "3"):
+            (tmp_path / f"ref_chr{chrom}.vcf.gz").touch()
+        cfg = _beagle_config(tmp_path, use_ref=True)
+        cfg["reference_vcf"] = str(tmp_path / "ref_chr{chrom}.vcf.gz")
+        cfg_path = tmp_path / "config.yaml"
+        _write_config(cfg_path, cfg)
+        result = subprocess.run(
+            [
+                "snakemake", "--dryrun", "--printshellcmds",
+                "--configfile", str(cfg_path),
+            ],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"ref={tmp_path}/ref_chr1.vcf.gz" in result.stdout
+        assert "{chrom}" not in result.stdout
+
 
 @requires_snakemake
 class TestAlphaImpute2Dryrun:

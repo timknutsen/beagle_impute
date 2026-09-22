@@ -102,20 +102,17 @@ snakemake --use-conda \
 
 ## 5. Outputs
 
-- Per-chromosome imputed VCFs: `vcf_output/imputed/chr{chrom}.vcf.gz`
-- Single combined VCF + index: `vcf_output/all_chromosomes.vcf.gz` (+ `.tbi`)
-- Final PLINK files: `plink_binary/imputed_data.bed/.bim/.fam`
-- Logs per step and chromosome: `logs/`
+Everything lands under `output_dir` (default `vcf_output/`), so two runs with
+different `output_dir` values never overwrite each other:
 
-**AlphaImpute2 mode outputs** (`imputer: "alphaimpute2"`):
-- Genome-wide imputed VCF + index: `vcf_output/alphaimpute2/all_chromosomes.vcf.gz` (+ `.tbi`)
-- Final PLINK files: `plink_binary/imputed_data.bed/.bim/.fam`
-- Intermediate AlphaImpute2 files: `vcf_output/alphaimpute2_input/` and `vcf_output/alphaimpute2_output/`
-- Logs: `logs/`
+| Imputer | Genome-wide VCF (+ `.tbi`) |
+|---|---|
+| Beagle | `vcf_output/all_chromosomes.vcf.gz` (per chromosome: `vcf_output/imputed/chr{N}.vcf.gz`) |
+| AlphaImpute2 | `vcf_output/alphaimpute2/all_chromosomes.vcf.gz` |
+| FImpute | `vcf_output/fimpute/all_chromosomes.vcf.gz` |
 
-**FImpute mode outputs** (`imputer: "fimpute"`):
-- Genome-wide imputed VCF + index: `vcf_output/fimpute/all_chromosomes.vcf.gz` (+ `.tbi`)
 - Final PLINK files: `vcf_output/plink_binary/imputed_data.bed/.bim/.fam`
+- Logs per step and chromosome: `vcf_output/logs/`
 - With `fimpute_params.reference_bfile`, the final files contain target
   (`bfile`) animals only; reference-chip animals are not output samples.
 
@@ -127,13 +124,16 @@ Run the accuracy workflow separately from the main imputation workflow:
 snakemake --snakefile Snakefile_accuracy --use-conda --cores 8
 ```
 
-`config_accuracy.yaml` supports three modes:
+`config_accuracy.yaml` supports two modes, both animal-level K-fold CV:
 
 | Mode | Purpose |
 |------|---------|
-| `mask_and_impute` | Hold out one validation set, mask it to LD density, impute, and compare to truth |
+| `kfold_mask_and_impute` (default) | Run K-fold animal CV from a shared LD marker panel to full density |
 | `cross_array` | Compare a real low-density array against a real high-density array for the same animals, scored K-fold and identity-gated |
-| `kfold_mask_and_impute` | Run K-fold animal CV from a shared LD marker panel to full density |
+
+For a quick single hold-out, run one fold: `cv_n_folds=5 cv_folds_to_run=1`
+holds out a fifth of the animals. (This replaces the old `mask_and_impute`
+mode, which imputed nothing with Beagle because it had no reference panel.)
 
 For the 10k-to-full benchmark requested for real data, use:
 
@@ -146,12 +146,10 @@ cv:
   target_n_snps: 10000
   target_snp_list: ""
   random_seed: 42
-  imputers: ["beagle", "alphaimpute2", "fimpute"]
-
-fimpute_params:
-  executable: "/mnt/efshome/applications/FImpute3/2026/FImpute3"
-  nthreads: 1
+  imputers: ["beagle", "fimpute"]   # add "alphaimpute2" for the three-way comparison
 ```
+
+FImpute's binary path comes from `fimpute_params.executable` in `config.yaml`.
 
 In this mode each fold masks the held-out animals to the same 10k SNP panel.
 The other nine folds remain full density as the reference set.  Beagle uses
@@ -163,8 +161,8 @@ animals are masked outside the LD panel.
 panel, since those markers were given to the imputer as observed genotypes and
 are returned unchanged — including them would inflate the reported accuracy by
 roughly `n_panel / n_total` (on a 50K chip with a 10k panel, about a fifth of
-all markers). The same exclusion applies to `mask_and_impute` and, for the
-overlap between the two arrays, to `cross_array`.
+all markers). The same exclusion applies, for the overlap between the two
+arrays, to `cross_array`.
 
 ### `cross_array`
 
@@ -256,6 +254,8 @@ CV outputs:
 - `accuracy_cv/{imputer}/fold{n}/metrics_by_snp.tsv`
 - `accuracy_cv/{imputer}/fold{n}/metrics_by_maf_bin.tsv`
 - `accuracy_cv/{imputer}/fold{n}/metrics_by_individual.tsv`
+- `accuracy_cv/folds/fold{n}/truth.vcf.gz`: the held-out truth, shared by every imputer
+- `accuracy_cv/logs/`
 - `accuracy_cv/snp_reliability.tsv` and `accuracy_cv/reliable_markers.txt`
 - `cross_array` also writes `setup/identity.tsv` and `setup/identity_fail.ids`
 
@@ -405,7 +405,7 @@ Setting `bref3_jar` causes the pipeline to convert the reference VCF to bref3 bi
 ### 2. Accuracy Evaluation
 - Run with `snakemake --snakefile Snakefile_accuracy`
 - Configure in `config_accuracy.yaml`
-- Modes: `mask_and_impute`, `cross_array`, and `kfold_mask_and_impute`
+- Modes: `kfold_mask_and_impute` and `cross_array`
 - Produces detailed accuracy metrics and summaries
 
 ## Scripts

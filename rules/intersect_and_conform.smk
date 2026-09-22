@@ -15,7 +15,7 @@ rule bcftools_isec:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/bcftools_isec_chr{chrom}.log"
+        _log + "bcftools_isec_chr{chrom}.log"
     resources:
         mem_mb = 32000,
         slurm_partition = "r7i-ondemand-2xlarge"
@@ -47,7 +47,7 @@ rule conform_gt:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/conform_gt_chr{chrom}.log"
+        _log + "conform_gt_chr{chrom}.log"
     resources:
         mem_mb  = 32000,
         runtime = 60,
@@ -82,7 +82,7 @@ rule convert_ref_to_bref3:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/bref3_chr{chrom}.log"
+        _log + "bref3_chr{chrom}.log"
     resources:
         mem_mb = 16000,
         slurm_partition = "r7i-ondemand-2xlarge"

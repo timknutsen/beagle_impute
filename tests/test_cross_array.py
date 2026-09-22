@@ -147,6 +147,35 @@ def test_identity_gate_fails_an_animal_it_could_not_score():
     assert verdicts["passed"].tolist() == [False]
 
 
+def test_identity_gate_matches_all_digit_animal_ids(tmp_path):
+    """
+    AquaGen IDs are all digits. Read without dtype=str, the metrics file parsed
+    them as integers, the merge against the string pair list matched nothing,
+    and every animal failed the gate -- aborting the run on a perfect cohort.
+    """
+    pairs = tmp_path / "pairs.txt"
+    pairs.write_text("0 2023033530559249\n0 2023033530559260\n")
+    metrics = tmp_path / "metrics.tsv"
+    metrics.write_text(
+        "sample\tconcordance\tn_evaluated\n"
+        "2023033530559249\t0.99\t400\n"
+        "2023033530559260\t0.98\t400\n"
+    )
+    result = subprocess.run(
+        [
+            sys.executable, str(REPO_ROOT / "scripts" / "identity_gate.py"),
+            "--pairs", str(pairs), "--metrics", str(metrics),
+            "--identity-out", str(tmp_path / "identity.tsv"),
+            "--fail-out", str(tmp_path / "fail.ids"),
+            "--keep-out", str(tmp_path / "keep.ids"),
+        ],
+        capture_output=True, text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len((tmp_path / "keep.ids").read_text().splitlines()) == 2
+
+
 # ── Allele orientation ───────────────────────────────────────────────────────
 
 def test_flip_is_detected_only_for_a_genuinely_reversed_pair():

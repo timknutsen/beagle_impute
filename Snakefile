@@ -1,35 +1,15 @@
 configfile: "config.yaml"
 
-import pandas as pd
+include: "rules/common.smk"
 
-# ---------------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------------
-
-def get_chromosomes(bfile):
-    # PLINK writes .bim tab-separated, but files that have passed through awk
-    # or other tools are often space-separated; \s+ accepts both.
-    bim = pd.read_csv(f"{bfile}.bim", sep=r"\s+", header=None)
-    chroms = [str(c) for c in bim[0].unique() if str(c) not in ("0", "")]
-    # Numeric codes sort numerically; anything else (X, Y, MT, scaffolds)
-    # sorts after them alphabetically instead of raising ValueError.
-    return sorted(chroms, key=lambda c: (0, int(c), "") if c.isdigit() else (1, 0, c))
 
 def get_chroms():
-    return get_chromosomes(config["bfile"])
+    return sorted_chromosomes(config["bfile"])
 
-# ---------------------------------------------------------------------------
-# Java heap sizing
-#
-# -Xmx bounds the heap only; metaspace, thread stacks, GC structures and native
-# buffers live outside it. Handing Java the full cgroup limit therefore invites
-# an OOM kill once the heap actually fills, so leave headroom.
-# ---------------------------------------------------------------------------
 
-_JAVA_HEAP_FRACTION = 0.85
-
-def java_heap_mb(mem_mb):
-    return max(1024, int(mem_mb * _JAVA_HEAP_FRACTION))
+# Logs live under output_dir like every other output, so two runs sharing a
+# working directory do not overwrite each other's logs.
+_log = config["output_dir"] + "/logs/"
 
 # ---------------------------------------------------------------------------
 # Parse-time feature flags
@@ -61,43 +41,18 @@ _use_bref3 = _use_ref and bool(str(config.get("bref3_jar") or "").strip())
 # expects in both modes, so no downstream rule changes are needed.
 _beagle_subdir = "imputed_ref" if _use_ref else "imputed"
 
-# Always run plink2 with --dog so non-human chromosome codes (1–38) are
-# accepted. Salmon (29), trout (32), and most livestock fit inside this range,
-# and human data still works because plink2's only check is that codes ≤ 38.
-# This is prepended to any user-supplied plink_extra_flags so a single source
-# of truth flows to every rule via config["plink_extra_flags"].
-config["plink_extra_flags"] = ("--dog " + config.get("plink_extra_flags", "")).strip()
-
-# ---------------------------------------------------------------------------
-# Auto-download helpers
-# If the configured jar path starts with "bin/", treat it as auto-managed and
-# add it as an explicit input dependency so Snakemake downloads it first.
-# Users with existing JARs can point config to any absolute path and these
-# download rules are never triggered.
-# ---------------------------------------------------------------------------
-
-_BEAGLE_URL    = "https://faculty.washington.edu/browning/beagle/beagle.27Feb25.75f.jar"
-_CONFORM_URL   = "https://faculty.washington.edu/browning/conform-gt/conform-gt.24May16.cee.jar"
-
 _beagle_jar  = config.get("beagle_jar",    "bin/beagle.jar")
 _conform_jar = config.get("conform_gt_jar", "bin/conform-gt.jar")
-
-
-def _auto_download(path, url):
-    """Download *url* to *path* if path starts with 'bin/' and does not exist."""
-    import os, subprocess as sp
-    if path.startswith("bin/") and not os.path.exists(path):
-        os.makedirs("bin", exist_ok=True)
-        print(f"Downloading {url} → {path}")
-        sp.run(["wget", "-q", "-O", path, url], check=True)
 
 
 onstart:
     # Only the Beagle path needs the JAR; the other imputers are separate tools.
     if not (_use_alphaimpute2 or _use_fimpute):
-        _auto_download(_beagle_jar, _BEAGLE_URL)
+        auto_download(_beagle_jar, BEAGLE_URL)
     if _use_ref:
-        _auto_download(_conform_jar, _CONFORM_URL)
+        auto_download(_conform_jar, CONFORM_URL)
+    if _use_bref3:
+        auto_download(config["bref3_jar"], BREF3_URL)
 
 # ---------------------------------------------------------------------------
 # Shared helpers: resolve final imputed VCF path (used by vcf_to_plink)
@@ -158,7 +113,7 @@ rule make_per_chrom_vcf:
     conda:
         "envs/workflow_env.yaml"
     log:
-        "logs/dedup_chr{chrom}.log"
+        _log + "dedup_chr{chrom}.log"
     threads: 1
     shell:
         """
@@ -186,7 +141,7 @@ rule normalize_vcf:
     conda:
         "envs/workflow_env.yaml"
     log:
-        "logs/normalize_chr{chrom}.log"
+        _log + "normalize_chr{chrom}.log"
     threads: 1
     shell:
         """
@@ -207,11 +162,14 @@ rule run_beagle:
             then      = config["output_dir"] + "/harmonized/chr{chrom}.vcf.gz",
             otherwise = rules.normalize_vcf.output.vcf
         ),
-        # bref3 is a per-chromosome binary reference; only present when bref3_jar is set
-        bref3 = branch(
-            lambda _: _use_bref3,
-            then      = config["output_dir"] + "/bref3/chr{chrom}_ref.bref3",
-            otherwise = []
+        # The reference as Beagle reads it: the bref3 conversion when
+        # bref3_jar is set, else reference_vcf itself. Declared as an input so
+        # a per-chromosome template (".../chr{chrom}.vcf.gz") resolves here,
+        # exactly as it does for bcftools_isec and conform_gt.
+        ref = (
+            config["output_dir"] + "/bref3/chr{chrom}_ref.bref3" if _use_bref3
+            else config["reference_vcf"] if _use_ref
+            else []
         )
     output:
         vcf = temp(config["output_dir"] + "/" + _beagle_subdir + "/chr{chrom}.vcf.gz"),
@@ -222,18 +180,13 @@ rule run_beagle:
         overlap   = config["beagle_params"]["overlap"],
         ne        = config["beagle_params"]["ne"],
         outbase   = lambda wildcards: f"{config['output_dir']}/{_beagle_subdir}/chr{wildcards.chrom}",
-        ref_param = (
-            lambda wildcards, input:
-                f"ref={input.bref3}" if _use_bref3
-                else f"ref={config['reference_vcf']}" if _use_ref
-                else ""
-        ),
+        ref_param = lambda wildcards, input: f"ref={input.ref}" if _use_ref else "",
         heap_mb   = java_heap_mb(70000)
     threads: config["beagle_params"]["nthreads"]
     conda:
         "envs/workflow_env.yaml"
     log:
-        "logs/beagle_chr{chrom}.log"
+        _log + "beagle_chr{chrom}.log"
     resources:
         mem_mb = 70000,
         slurm_partition = "r7i-ondemand-4xlarge"
@@ -278,7 +231,7 @@ if _use_ref:
         conda:
             "envs/workflow_env.yaml"
         log:
-            "logs/merge_imputed_chr{chrom}.log"
+            _log + "merge_imputed_chr{chrom}.log"
         resources:
             mem_mb = 16000,
             slurm_partition = "r7i-ondemand-2xlarge"
@@ -325,7 +278,7 @@ rule concat_chromosomes:
         mem_mb = 64000,
         slurm_partition = "r7i-ondemand-4xlarge"
     log:
-        "logs/concat_chromosomes.log"
+        _log + "concat_chromosomes.log"
     shell:
         """
         (bcftools concat \
@@ -360,7 +313,7 @@ rule vcf_to_plink:
     conda:
         "envs/workflow_env.yaml"
     log:
-        "logs/vcf_to_plink.log"
+        _log + "vcf_to_plink.log"
     shell:
         """
         ({params.plink} \

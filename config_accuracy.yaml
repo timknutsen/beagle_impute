@@ -3,48 +3,22 @@
 # ============================================================
 # Run with: snakemake --snakefile Snakefile_accuracy [options]
 #
-# This workflow evaluates how accurately the pipeline imputes
-# genotypes by comparing imputed calls against known truth.
+# Both modes are animal-level K-fold cross-validation. Each fold's held-out
+# animals are imputed from a low-density (LD) marker panel, with the other
+# folds as the high-density reference, and scored against their real
+# high-density genotypes on the markers they were NOT given.
 #
-# Three modes are supported:
+#   kfold_mask_and_impute — one bfile. The LD panel is sampled from it
+#                           (cv.target_n_snps) or given (cv.target_snp_list).
 #
-#   mask_and_impute  — take your existing bfile, withhold a fraction of
-#                      animals, mask them to a lower SNP density, impute,
-#                      and compare back to their true high-density genotypes.
-#                      Good for: cross-validation, testing whether your
-#                      imputation parameters are appropriate.
-#
-#   cross_array      — provide the same animals genotyped on two different
-#                      arrays (low-density and high-density). Impute from
-#                      the low-density array and compare to the high-density
-#                      truth. Good for: evaluating accuracy across a real
-#                      array transition (e.g. 50K → 700K).
-#
-#   kfold_mask_and_impute
-#                    — animal-level K-fold CV.  For each fold, held-out
-#                      animals are masked to a shared LD SNP panel while the
-#                      other folds remain full-density references.  This mode
-#                      can compare Beagle, AlphaImpute2, and FImpute.
+#   cross_array           — the same animals on two real arrays (LD and HD).
+#                           The LD panel is exactly the markers both carry, and
+#                           an identity gate drops mismatched pairs first.
 
 # ── Mode ─────────────────────────────────────────────────────────────────────
-# Choose one: "mask_and_impute" or "cross_array"
-accuracy_mode: "mask_and_impute"
+accuracy_mode: "kfold_mask_and_impute"
 
 accuracy_output_dir: "accuracy_output"
-
-# ── mask_and_impute settings ─────────────────────────────────────────────────
-mask:
-  # --- Low-density SNP panel (choose one) ---
-  # Provide a file of SNP IDs (one per line) to use as the low-density panel:
-  target_snp_list: ""          # e.g. "resources/50k_snp_list.txt"
-  # OR randomly sample N SNPs from the bfile to simulate a low-density array:
-  target_n_snps: 50000
-
-  # --- Validation animals (choose one) ---
-  # Provide a 2-column FID/IID file of animals to withhold as the validation set:
-  validation_animals: ""       # e.g. "resources/validation_ids.txt"
-  # OR randomly withhold a fraction of animals:
-  validation_fraction: 0.2     # 20% withheld as validation; 80% used as reference
 
 # ── cross_array settings ─────────────────────────────────────────────────────
 # Runs the acc_cv_* rule family, so cv: below applies here too (n_folds, seed,
@@ -71,9 +45,12 @@ cross_array:
   # identity check has nothing to judge on and the LD panel is not an array.
   min_shared_markers: 100
 
-# ── kfold_mask_and_impute settings ──────────────────────────────────────────
+# ── CV settings (both modes) ────────────────────────────────────────────────
 cv:
   n_folds: 10
+  # Run only these folds; empty runs all. [1] is a single hold-out of
+  # 1/n_folds of the animals -- a quick check before the full K-fold.
+  folds_to_run: []
   target_n_snps: 10000
   # Optional fixed SNP list; leave empty to sample from .bim. Set this to the
   # markers shared with the low-density array (scripts/shared_marker_list.py)
@@ -82,7 +59,9 @@ cv:
   # Ignored in cross_array, which derives the panel from the two .bim files.
   target_snp_list: ""
   random_seed: 42
-  imputers: ["beagle", "alphaimpute2", "fimpute"]
+  # AlphaImpute2 is also supported, but costs ~12 h per step against
+  # FImpute's minutes; add it only when you need the comparison.
+  imputers: ["beagle", "fimpute"]
 
   # Cap the reference panel at N animals per fold, sampled at random_seed.
   # 0 keeps every non-held-out animal. Re-running with different values (and a
@@ -94,16 +73,6 @@ cv:
   # not its mean. A marker that collapses in one fold out of five has no place
   # in a reference panel, and averaging hides exactly that.
   reliable_r2_threshold: 0.90
-
-# NOTE: this block replaces config.yaml's fimpute_params wholesale -- the later
-# configfile wins on key collisions -- so every key FImpute needs has to be
-# repeated here, not just the ones that differ.
-fimpute_params:
-  executable: "/mnt/efshome/applications/FImpute3/2026/FImpute3"
-  nthreads: 1
-  reference_bfile: ""
-  keep_observed: true
-  phase_output: true
 
 # ── Accuracy metric settings ─────────────────────────────────────────────────
 # MAF bin boundaries for stratified accuracy reporting.

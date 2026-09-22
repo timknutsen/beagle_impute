@@ -66,7 +66,9 @@ def main() -> None:
     args = parser.parse_args()
 
     pairs = read_pairs(args.pairs)
-    metrics = pd.read_csv(args.metrics, sep="\t")
+    # IDs stay strings: all-digit animal IDs would otherwise parse as int
+    # and match none of the (string) pairs, failing every animal.
+    metrics = pd.read_csv(args.metrics, sep="\t", dtype={"sample": str})
     verdicts = classify(pairs, metrics, args.threshold)
 
     for path in (args.identity_out, args.fail_out, args.keep_out):

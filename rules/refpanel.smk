@@ -56,7 +56,7 @@ rule refpanel_select:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/refpanel/{variant}_select.log",
+        _rp_out + "/logs/{variant}_select.log",
     shell:
         """
         python {workflow.basedir}/scripts/select_refpanel.py \
@@ -87,7 +87,7 @@ rule refpanel_bfile:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/refpanel/{variant}_bfile.log",
+        _rp_out + "/logs/{variant}_bfile.log",
     shell:
         """
         ({params.plink} \
@@ -117,7 +117,7 @@ rule refpanel_chrom_vcf:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/refpanel/{variant}_export_chr{chrom}.log",
+        _rp_out + "/logs/{variant}_export_chr{chrom}.log",
     shell:
         """
         ({params.plink} \
@@ -145,7 +145,7 @@ rule refpanel_normalize:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/refpanel/{variant}_normalize_chr{chrom}.log",
+        _rp_out + "/logs/{variant}_normalize_chr{chrom}.log",
     shell:
         """
         (bcftools norm -d snps {input.vcf} | bgzip > {output.vcf}) 2> {log}
@@ -182,7 +182,7 @@ rule refpanel_phase:
         mem_mb = 70000,
         slurm_partition = "r7i-ondemand-4xlarge",
     log:
-        "logs/refpanel/{variant}_phase_chr{chrom}.log",
+        _rp_out + "/logs/{variant}_phase_chr{chrom}.log",
     shell:
         """
         (java -Xmx{params.heap_mb}m -jar {params.beagle} \
@@ -209,7 +209,7 @@ rule refpanel_bref3:
         mem_mb = 16000,
         slurm_partition = "r7i-ondemand-2xlarge",
     log:
-        "logs/refpanel/{variant}_bref3_chr{chrom}.log",
+        _rp_out + "/logs/{variant}_bref3_chr{chrom}.log",
     shell:
         """
         (java -Xmx{params.heap_mb}m -jar {params.bref3_jar} \
@@ -246,7 +246,7 @@ rule refpanel_report:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/refpanel/{variant}_report.log",
+        _rp_out + "/logs/{variant}_report.log",
     run:
         import pandas as pd
 

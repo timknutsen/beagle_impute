@@ -63,22 +63,32 @@ Reads `config.yaml` + `config_accuracy.yaml`. Set `accuracy_mode` to one of:
 
 | Mode | What it does |
 |------|--------------|
-| `mask_and_impute` | Hold out one validation set, mask it to LD density, impute, compare to truth |
+| `kfold_mask_and_impute` (default) | Animal-level K-fold CV against a shared LD panel; benchmarks every engine in `cv.imputers` in one run |
 | `cross_array` | Same animals on two arrays, scored K-fold; identity-gated. See below |
-| `kfold_mask_and_impute` | Animal-level K-fold CV against a shared LD panel; can benchmark Beagle vs AlphaImpute2 vs FImpute in one run |
+
+`cv.folds_to_run` (alias `cv_folds_to_run=1`) runs a subset of folds; one fold
+is a single hold-out of `1/n_folds` of the animals. That replaced the old
+`mask_and_impute` mode, which with Beagle handed it only the LD markers and no
+reference — so it imputed nothing, and every marker it returned was one the
+truth excludes. Setting `accuracy_mode: mask_and_impute` now raises with the
+equivalent command.
 
 ### `cross_array` is a K-fold, not a held-out panel
 
-The two CV modes share one rule family (`acc_cv_*`, guarded by
-`if _acc_mode in ("kfold_mask_and_impute", "cross_array")`). They differ only in
-which fileset each per-fold output is cut from:
+Both modes run one rule family (`acc_cv_*`). They differ only in which
+fileset each per-fold input is cut from. These inputs do not depend on the
+imputer, so they live under `folds/fold{N}/` and are built once per fold, not
+once per engine:
 
-| Per-fold output | `kfold_mask_and_impute` | `cross_array` |
+| Per-fold input (`folds/fold{N}/`) | `kfold_mask_and_impute` | `cross_array` |
 |---|---|---|
-| `to_impute/masked` | the bfile, thinned to the panel | the **LD array**, that fold's animals |
-| `reference/panel` | the bfile, minus the fold | the **HD array**, minus the fold |
-| `truth/hd` | the bfile, fold only, panel removed | the **HD array**, fold only, panel removed |
-| `to_impute/combined` | HD masked for the fold | HD masked, **the fold's LD calls spliced in** |
+| `masked` (Beagle `gt=`) | the bfile, thinned to the panel | the **LD array**, that fold's animals |
+| `reference` (Beagle `ref=`, phased per fold) | the bfile, minus the fold | the **HD array**, minus the fold |
+| `truth.vcf.gz` | the bfile, fold only, panel removed | the **HD array**, fold only, panel removed |
+| `combined` (FImpute, AlphaImpute2) | HD masked for the fold | HD masked, **the fold's LD calls spliced in** |
+
+Each engine then writes `{imputer}/fold{N}/imputed/chr*.vcf.gz`, and one
+`acc_cv_concat` + `acc_cv_compute_metrics` pair serves all three.
 
 An external HD panel is not an option for the pairs this exists to measure.
 Practically every Ssa70kv4 fish is also V3-typed, so exactly **one** V4 fish
@@ -119,7 +129,7 @@ the difference** — squaring the correlation hides the sign. It surfaces only a
 collapsed concordance, long after the run. Incompatible allele pairs raise
 rather than being guessed at.
 
-**The fold's LD genotypes must come from the LD array.** `to_impute/combined`
+**The fold's LD genotypes must come from the LD array.** `folds/fold{N}/combined`
 (what FImpute and AlphaImpute2 eat) is built with
 `mask_validation_genotypes.py --replace-from <ld_bfile>`. Reusing the HD array's
 calls at the same positions would delete the probe differences and
@@ -172,9 +182,8 @@ Both CV modes are configured under the `cv:` key (`n_folds`, `target_n_snps`,
 `cross_array:` (`ld_bfile`, `hd_bfile`, `identity_threshold`,
 `min_identity_pass_rate`, `min_shared_markers`). They write `cv_summary.tsv`
 (one row per imputer/fold/metric), `cv_imputer_summary.tsv` (mean/SD by
-imputer) and `snp_reliability.tsv` + `reliable_markers.txt`, whereas
-`mask_and_impute` writes `summary.tsv` + `metrics_by_{maf_bin,snp,individual}.tsv`.
-`rule accuracy_all` switches its target list on the mode.
+imputer) and `snp_reliability.tsv` + `reliable_markers.txt`; per fold,
+`{imputer}/fold{N}/` holds `summary.tsv` + `metrics_by_{maf_bin,snp,individual}.tsv`.
 
 `cv.reference_max_animals` caps the per-fold reference panel, sampled at
 `cv.random_seed`. Sweeping panel size is re-running with different values and a
@@ -185,15 +194,15 @@ Snakemake rejects dotted keys in `--config`, so CLI overrides use flat aliases
 `cross_array_ld_bfile=…`, `cross_array_hd_bfile=…`).
 
 **A flat alias must be resolved before the YAML block, not after.**
-`config_accuracy.yaml` defines every `cv.*` key, so `_nested_config` reading the
-block first meant a CLI override was accepted, ignored, and the run silently
-used the YAML value — `cv_n_folds=2` produced ten folds. The same ordering
-applies to `_acc_nested` in `Snakefile_accuracy`, which needs the same lookup
-before the include runs.
+`config_accuracy.yaml` defines every `cv.*` key, so reading the block first
+meant a CLI override was accepted, ignored, and the run silently used the YAML
+value — `cv_n_folds=2` produced ten folds. `nested_config` in
+`rules/common.smk` is the one lookup every Snakefile uses; keep that order.
 
-**`mask_and_impute` has no FImpute path** and now raises rather than running
-Beagle under FImpute's name. FImpute is reachable through the two CV modes,
-which pick the engine per fold from `cv.imputers`.
+**Every `temp()` index a rule reads must be named in its `input:`.** Beagle
+writes no `##contig` lines, so `bcftools concat` needs the per-chromosome
+`.tbi`; before `acc_cv_concat` declared them, Snakemake deleted them first and
+no Beagle CV run ever finished.
 
 ## Reference panel construction (separate Snakefile)
 
@@ -358,13 +367,14 @@ normalize_vcf → bcftools_isec → conform_gt → run_beagle → merge_imputed_
 ### Rule files
 
 - `Snakefile` — main entry point; all Beagle rules + concat + vcf_to_plink
+- `rules/common.smk` — included first by all three Snakefiles: chromosome list,
+  `nested_config`, `java_heap_mb`, JAR auto-download, and the `--dog` prepend
 - `rules/intersect_and_conform.smk` — `bcftools_isec`, `conform_gt`, `convert_ref_to_bref3` (only loaded when `reference_vcf` is set)
 - `rules/alphaimpute2.smk` — AlphaImpute2 mode rules (only loaded when `imputer: "alphaimpute2"`)
 - `rules/refpanel.smk` — phased + bref3 reference panel construction (only used
   via `Snakefile_refpanel`)
-- `rules/accuracy.smk` — imputation accuracy evaluation (only used via `Snakefile_accuracy`).
-  Holds two parallel rule families: `acc_*` for `mask_and_impute`, and `acc_cv_*`
-  shared by `kfold_mask_and_impute` and `cross_array`.
+- `rules/accuracy.smk` — imputation accuracy evaluation (only used via
+  `Snakefile_accuracy`); the `acc_cv_*` family shared by both modes.
 - `scripts/alphaimpute2_to_vcf.py` — converts AlphaImpute2 output to VCF
 - `scripts/compute_accuracy_metrics.py` — concordance/r² metrics for accuracy evaluation
 - `scripts/make_accuracy_cv_setup.py` — deterministic CV fold assignment + shared LD SNP panel
@@ -407,7 +417,7 @@ the default `r7i-ondemand-large` (15 GiB / 2 CPU) and sbatch rejects the job
 | `merge_imputed_with_target_only` / `convert_ref_to_bref3` | 16000 | `r7i-ondemand-2xlarge` |
 | `make_per_chrom_vcf` / `normalize_vcf` / `vcf_to_plink` | (none) | default `r7i-ondemand-large` |
 | `acc_cv_run_beagle` | 70000 | `r7i-ondemand-4xlarge` |
-| `acc_cv_concat_*` | 64000 | `r7i-ondemand-4xlarge` |
+| `acc_cv_concat` | 64000 | `r7i-ondemand-4xlarge` |
 | `acc_cv_alphaimpute2_to_vcf` / `acc_cv_run_fimpute` | 32000 | `r7i-ondemand-2xlarge` |
 | `acc_cv_identity_metrics` | 32000 | `r7i-ondemand-2xlarge` |
 | `acc_cv_beagle_phase_ref` | 70000 | `r7i-ondemand-4xlarge` |
@@ -416,13 +426,9 @@ the default `r7i-ondemand-large` (15 GiB / 2 CPU) and sbatch rejects the job
 | `acc_cv_run_alphaimpute2` | 16000 | `r7i-ondemand-2xlarge` |
 | `run_alphaimpute2` (main pipeline) | 16000 | `r7i-ondemand-2xlarge` |
 | `alphaimpute2_to_vcf` (main pipeline) | 32000 | `r7i-ondemand-2xlarge` |
-| `acc_run_beagle` | 70000 | `r7i-ondemand-4xlarge` |
-| `acc_concat_imputed` / `acc_concat_alphaimpute2` | 64000 | `r7i-ondemand-4xlarge` |
-| `acc_alphaimpute2_to_vcf` | 32000 | `r7i-ondemand-2xlarge` |
-| `acc_run_alphaimpute2` | 16000 | `r7i-ondemand-2xlarge` |
 
-All accuracy modes (`mask_and_impute`, `cross_array`, `kfold_mask_and_impute`)
-now declare partitions on every heavy rule and run under the SLURM executor.
+Both accuracy modes declare partitions on every heavy rule and run under the
+SLURM executor.
 `acc_cv_identity_metrics` compares the whole paired cohort at every shared
 marker in one go, so it is the largest single matrix in a cross-array run —
 larger than any per-fold comparison.
@@ -441,7 +447,8 @@ add `slurm_partition = "<name>"` to its `resources:`.
 - **All rule outputs must live under `${output_dir}`.** Hard-coded paths
   (e.g. `"plink_binary/imputed_data.bed"`) cause parallel runs that share a
   cwd to clobber each other. Use `config["output_dir"] + "/..."` for every
-  `output:` field.
+  `output:` field. Logs too: each Snakefile writes them to `<output dir>/logs/`
+  through `_log`.
 - **plink2 invocations must always pass `--dog`.** The Snakefile prepends
   `--dog` to `config["plink_extra_flags"]` at parse time so every existing
   `params.extra_flags` / `params.extra` slot inherits it. When adding a new

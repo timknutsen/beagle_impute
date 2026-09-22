@@ -7,7 +7,7 @@ where the bodies are buried.
 **Handover date:** 2026-08-18
 **Branch:** `feature/cross-array-kfold`, six commits ahead of `master` after
 this handoff commit; pushed with a draft PR open.
-**Tests:** 80 pass. Beagle and FImpute both run end to end with and without a
+**Tests:** 81 pass. Beagle and FImpute both run end to end with and without a
 reference; all accuracy/refpanel DAG tests are clean.
 
 ---
@@ -111,9 +111,12 @@ per-array annotation. `shared_marker_list.py` drops them from the panel.
 
 ## What does not work / is not done
 
-1. **No truth pair has been run end to end.** Everything above is one
-   chromosome, one fold, plus the setup stage. Nothing has produced a
-   `cv_summary.tsv`.
+1. **No truth pair has been run end to end on real data.** Everything above is
+   one chromosome, one fold, plus the setup stage. Until 2026-09-22 no Beagle
+   CV run *could* finish: `acc_cv_concat` did not declare the per-chromosome
+   `.tbi`, Snakemake deleted them, and `bcftools concat` aborted. That is fixed,
+   and both modes now produce `cv_summary.tsv` on the bundled fixture (Beagle
+   and AlphaImpute2; FImpute is not installable in CI).
 
 2. **`cross_array` cannot use an external reference panel.** It always builds
    the panel from held-out folds. That is correct and necessary for V3 → V4,
@@ -144,8 +147,9 @@ per-array annotation. `shared_marker_list.py` drops them from the panel.
 6. **AlphaImpute2's place is still unresolved.** ~12 h per step against
    FImpute's minutes, losing on both axes. Still wired into every mode.
 
-7. **`mask_and_impute` has no FImpute path.** It now raises instead of silently
-   running Beagle under FImpute's name, but the path does not exist. Use a CV mode.
+7. **`mask_and_impute` was removed.** With Beagle it scored nothing (LD
+   markers only, no reference), and it had no FImpute path. A single hold-out
+   is `cv_folds_to_run=1` on `kfold_mask_and_impute`.
 
 ---
 
@@ -250,6 +254,9 @@ validation above.
 - **Allelic R² cannot see an allele flip** — squaring hides the sign. Always
   read concordance alongside it, and check `n_variants_evaluated` is what you
   expect. A flip once gave r² 0.932 with concordance 0.409.
+- **All-digit animal IDs parse as integers** unless read with `dtype=str`.
+  `identity_gate.py` did exactly that and failed every AquaGen animal (IDs like
+  `2023033530559249`) against the string pair list.
 - **Dry-runs prove almost nothing.** Every defect fixed in commits 3 and 4
   dry-ran clean. Run one chromosome before trusting a DAG.
 
@@ -303,6 +310,7 @@ snakemake --snakefile Snakefile_accuracy --use-conda --executor slurm --jobs 35 
            cv_n_folds=5 cv_imputers="beagle fimpute"
 ```
 
-1,671 jobs; the gate serialises the first ~4 minutes, then 290 Beagle
-chromosome-jobs fan out. Expect roughly 30–45 minutes wall at 35 slots, half of
+The gate serialises the first ~4 minutes, then the per-fold Beagle
+chromosome-jobs fan out. Fold inputs (truth, panel, masked and combined
+filesets) are built once per fold and shared by both engines. Expect roughly 30–45 minutes wall at 35 slots, half of
 it panel phasing.
