@@ -11,7 +11,8 @@ with chromosome codes 1–38.
 | Measure accuracy | `Snakefile_accuracy` | `config_accuracy.yaml` | r² / concordance per imputer, reliable-marker list |
 | Build a reference panel | `Snakefile_refpanel` | `config_refpanel.yaml` | phased VCF + bref3 per chromosome |
 
-Every setting is documented in its config file. Architecture and the traps
+Every setting is documented in its config file. `docs/recipes/` has
+step-by-step runbooks for real-data tests. Architecture and the traps
 behind each design choice are in `CLAUDE.md`; current project state is in
 `ONBOARDING.md`.
 
