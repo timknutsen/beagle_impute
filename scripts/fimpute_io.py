@@ -414,6 +414,7 @@ def write_fimpute_vcf(
     out_vcf: str | Path,
     snp_info_path: str | Path | None = None,
     phased: bool = True,
+    target_chip: str | int | None = None,
 ) -> None:
     """
     Convert FImpute genotypes_imp.txt to a VCF with IID sample names.
@@ -430,6 +431,17 @@ def write_fimpute_vcf(
     out_vcf.parent.mkdir(parents=True, exist_ok=True)
 
     calls = pd.read_csv(imputed_path, sep="\t", dtype={"ID": str, "Calls...": str})
+    if target_chip is not None:
+        if "Chip" not in calls.columns:
+            raise ValueError(
+                f"{imputed_path} has no Chip column; cannot select target chip "
+                f"{target_chip}"
+            )
+        calls = calls.loc[calls["Chip"].astype(str) == str(target_chip)].copy()
+        if calls.empty:
+            raise ValueError(
+                f"{imputed_path} contains no animals on target chip {target_chip}"
+            )
     bims = [
         pd.read_csv(
             p, sep=r"\s+", header=None,
@@ -540,6 +552,8 @@ def main() -> None:
                         help="Collapse resolved heterozygotes to 0/1")
     to_vcf.add_argument("--id-map", required=True, type=Path)
     to_vcf.add_argument("--out-vcf", required=True, type=Path)
+    to_vcf.add_argument("--target-chip", default=None,
+                        help="Emit only animals assigned to this FImpute chip")
 
     args = parser.parse_args()
     if args.command == "prepare-inputs":
@@ -556,6 +570,7 @@ def main() -> None:
             args.imputed, args.bim, args.id_map, args.out_vcf,
             snp_info_path=args.snp_info,
             phased=not args.unphased,
+            target_chip=args.target_chip,
         )
 
 

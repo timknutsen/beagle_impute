@@ -15,7 +15,7 @@ rule bcftools_isec:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/bcftools_isec_chr{chrom}.log"
+        _log + "bcftools_isec_chr{chrom}.log"
     resources:
         mem_mb = 32000,
         slurm_partition = "r7i-ondemand-2xlarge"
@@ -39,11 +39,15 @@ rule conform_gt:
         vcf = temp(config["output_dir"] + "/harmonized/chr{chrom}.vcf.gz")
     params:
         conform_jar = config.get("conform_gt_jar", ""),
-        outbase     = config["output_dir"] + "/harmonized/chr{chrom}"
+        outbase     = config["output_dir"] + "/harmonized/chr{chrom}",
+        # Must track resources.mem_mb below. -Xmx bounds the heap only, so the
+        # JVM's own allocations have to fit in the rest of the cgroup limit;
+        # java_heap_mb applies that margin.
+        heap_mb     = java_heap_mb(32000)
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/conform_gt_chr{chrom}.log"
+        _log + "conform_gt_chr{chrom}.log"
     resources:
         mem_mb  = 32000,
         runtime = 60,
@@ -78,7 +82,7 @@ rule convert_ref_to_bref3:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/bref3_chr{chrom}.log"
+        _log + "bref3_chr{chrom}.log"
     resources:
         mem_mb = 16000,
         slurm_partition = "r7i-ondemand-2xlarge"

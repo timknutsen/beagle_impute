@@ -1,0 +1,53 @@
+# Snakefile_refpanel — build a phased, bref3-encoded reference panel.
+#
+# Usage:
+#   snakemake --snakefile Snakefile_refpanel --use-conda --cores 8 \
+#     --config refpanel_bfile=/path/to/qc_Ssa70kv1 refpanel_name=Ssa70kv1
+#
+# One array per run; the array is a parameter, so the same machinery builds the
+# v1, v3 and v4 panels. Outputs per variant:
+#
+#   <out>/<variant>/phased/chr<N>.vcf.gz   phased, no missing calls
+#   <out>/<variant>/bref3/chr<N>.bref3     what Beagle should actually read
+#   <out>/<variant>/manifest.tsv           every animal, kept or dropped, with a reason
+#   <out>/<variant>/panel_report.tsv       what this panel is and how it was made
+#
+# Feed the result to the main pipeline with reference_vcf= and bref3_jar=.
+#
+# Tool configuration (beagle_jar, plink_path, beagle_params) is inherited from
+# config.yaml; panel settings come from config_refpanel.yaml.
+
+configfile: "config.yaml"
+configfile: "config_refpanel.yaml"
+
+include: "rules/common.smk"
+
+
+config.setdefault("refpanel", {})
+for _key in ("bfile", "name", "pedigree", "max_per_family", "random_seed"):
+    _value = nested_config("refpanel", _key)
+    if _value is not None:
+        config["refpanel"][_key] = _value
+
+
+def rp_get_chromosomes():
+    """Chromosomes present in the source array."""
+    bfile = str(config["refpanel"].get("bfile", "")).strip()
+    if not bfile:
+        raise ValueError("refpanel.bfile is required (or the alias refpanel_bfile=).")
+    return sorted_chromosomes(bfile)
+
+
+onstart:
+    # The main Snakefile downloads beagle.jar and conform-gt.jar but never
+    # bref3.jar, because nothing there produced a panel.
+    auto_download(config.get("beagle_jar", "bin/beagle.jar"), BEAGLE_URL)
+    auto_download(config.get("bref3_jar", "bin/bref3.jar"), BREF3_URL)
+
+
+include: "rules/refpanel.smk"
+
+
+rule refpanel_all:
+    input:
+        expand(_rp_out + "/{variant}/panel_report.tsv", variant=sorted(_rp_variants)),

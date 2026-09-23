@@ -186,6 +186,36 @@ def test_write_fimpute_vcf_emits_phased_genotypes_by_default(tmp_path):
     assert lines[2].split("\t")[-2:] == ["1|0", "./."]
 
 
+def test_write_fimpute_vcf_can_emit_only_target_chip_animals(tmp_path):
+    """A two-chip main run must not leak reference animals into its output."""
+    bim = tmp_path / "chr1.bim"
+    bim.write_text("1\tsnp1\t0\t100\tA\tG\n1\tsnp2\t0\t200\tC\tT\n")
+    id_map = tmp_path / "id_map.tsv"
+    id_map.write_text(
+        "short_id\tfid\tiid\n"
+        "1\tREF\treference_fish\n"
+        "2\tTARGET\ttarget_a\n"
+        "3\tTARGET\ttarget_b\n"
+    )
+    imp = tmp_path / "genotypes_imp.txt"
+    imp.write_text(
+        "ID\tChip\tCalls...\n"
+        "1\t1\t00\n"
+        "2\t2\t34\n"
+        "3\t2\t25\n"
+    )
+    out_vcf = tmp_path / "chr1.vcf"
+
+    write_fimpute_vcf(imp, bim, id_map, out_vcf, target_chip=2)
+
+    header = next(
+        line for line in out_vcf.read_text().splitlines()
+        if line.startswith("#CHROM")
+    )
+    assert header.split("\t")[9:] == ["target_a", "target_b"]
+    assert "reference_fish" not in header
+
+
 def test_vectorised_fimpute_encoding_matches_the_scalar_mapping():
     """
     The fast path must agree with the readable one on every code, including NA.
@@ -288,3 +318,62 @@ def test_accuracy_cv_dryrun_resolves_three_imputer_benchmark(tmp_path):
     assert result.returncode == 0, (
         f"CV dryrun failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
+
+
+def _accuracy_dryrun(tmp_path, *extra):
+    return subprocess.run(
+        [
+            "snakemake", "--snakefile", "Snakefile_accuracy",
+            "--dryrun", "--quiet", "rules",
+            "--config",
+            f"accuracy_output_dir={tmp_path / 'acc'}",
+            f"bfile={REAL_BFILE}",
+            "plink_path=plink2",
+            "beagle_jar=fake.jar",
+            "cv_target_n_snps=10",
+            *extra,
+        ],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+
+
+def _job_counts(stdout):
+    counts = {}
+    for line in stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].isdigit():
+            counts[parts[0]] = int(parts[1])
+    return counts
+
+
+@requires_snakemake
+def test_fold_inputs_are_built_once_per_fold_not_per_imputer(tmp_path):
+    """Truth, panel and combined filesets do not depend on the engine."""
+    result = _accuracy_dryrun(
+        tmp_path, "cv_n_folds=3", "cv_imputers=beagle alphaimpute2 fimpute"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    counts = _job_counts(result.stdout)
+    assert counts["acc_cv_truth_vcf"] == 3
+    assert counts["acc_cv_combined_bfile"] == 3
+    assert counts["acc_cv_compute_metrics"] == 9
+
+
+@requires_snakemake
+def test_folds_to_run_gives_a_single_hold_out(tmp_path):
+    result = _accuracy_dryrun(
+        tmp_path, "cv_n_folds=5", "cv_folds_to_run=1", "cv_imputers=beagle"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    counts = _job_counts(result.stdout)
+    assert counts["acc_cv_compute_metrics"] == 1
+    assert counts["acc_cv_truth_vcf"] == 1
+
+
+@requires_snakemake
+def test_removed_mask_and_impute_mode_points_at_its_replacement(tmp_path):
+    result = _accuracy_dryrun(tmp_path, "accuracy_mode=mask_and_impute")
+    assert result.returncode != 0
+    assert "cv_folds_to_run=1" in result.stdout + result.stderr

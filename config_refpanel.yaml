@@ -1,0 +1,50 @@
+# ============================================================
+# Reference panel construction
+# ============================================================
+# Run with: snakemake --snakefile Snakefile_refpanel --use-conda --cores 8
+#
+# Builds a phased, bref3-encoded reference panel from a QC'd per-array PLINK
+# fileset. The result is what `reference_vcf` + `bref3_jar` in config.yaml
+# expect, and it is a one-time cost: every later imputation loads the bref3
+# instead of re-phasing.
+#
+# The array is a parameter. Build one panel per array (Ssa70kv1, Ssa70kv3,
+# Ssa70kv4) by pointing refpanel.bfile at each QC'd fileset in turn.
+
+refpanel:
+  # QC'd PLINK prefix for ONE array. QC belongs upstream and per chip -- status
+  # OK, --geno, --maf, --hwe -- see the note in CLAUDE.md.
+  bfile: ""
+  # Names the outputs and the manifest; use the array name, e.g. "Ssa70kv1".
+  name: "panel"
+
+  # iid / sire / dam, whitespace separated. Needed only for family capping;
+  # an array export straight from the database has no parents in its .fam, so
+  # resolve them from GPA first (assign='Yes'), two generations up.
+  pedigree: ""
+
+  # Cap per sire x dam pair. A breeding cohort is not a diverse sample: full
+  # sibs share long haplotype blocks, so the tenth sib adds almost nothing a
+  # panel can use while costing the same phasing time, and it pulls the panel's
+  # allele frequencies toward whichever families were bred most. 0 = no cap.
+  max_per_family: 4
+
+  random_seed: 42
+
+  # Panel variants, built from one selection pass and one manifest.
+  #
+  #   "full"  -- no exclusions; the production panel, maximum size.
+  #   others  -- name: <file of IDs to hold out>, for scoring those animals.
+  #
+  # Exclusions are applied BEFORE phasing, deliberately. Subsetting an
+  # already-phased panel is cheaper, but the excluded animals' genotypes
+  # informed the phase of the relatives that remain, so a benchmark built that
+  # way is scored against a panel its own test animals helped build.
+  variants:
+    full: []
+    # benchmark_50k_v1: ["/path/to/steps/step1/keep.ids"]
+
+output_dir: "refpanel_output"
+
+# Downloaded into bin/ on first run if left as a bin/ path, like beagle.jar.
+bref3_jar: "bin/bref3.jar"

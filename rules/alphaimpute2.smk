@@ -39,7 +39,7 @@ rule plink_to_alphaimpute2_fmt:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/plink_to_alphaimpute2.log",
+        _log + "plink_to_alphaimpute2.log",
     shell:
         """
         (
@@ -103,9 +103,10 @@ rule run_alphaimpute2:
     conda:
         "../envs/alphaimpute2_env.yaml"
     log:
-        "logs/run_alphaimpute2.log",
+        _log + "run_alphaimpute2.log",
     resources:
         mem_mb = 16000,
+        slurm_partition = "r7i-ondemand-2xlarge",
     shell:
         """
         mkdir -p "$(dirname {output.genotypes})"
@@ -145,8 +146,9 @@ rule alphaimpute2_to_vcf:
     conda:
         "../envs/workflow_env.yaml"
     log:
-        "logs/alphaimpute2_to_vcf.log",
+        _log + "alphaimpute2_to_vcf.log",
     resources:
         mem_mb = 32000,
+        slurm_partition = "r7i-ondemand-2xlarge",
     script:
         "../scripts/alphaimpute2_to_vcf.py"
