@@ -203,7 +203,8 @@ def write_fimpute_inputs_from_raw(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    raw = pd.read_csv(raw_path, sep=r"\s+")
+    # Preserve leading zeroes in AquaGen IDs from PLINK --export A.
+    raw = pd.read_csv(raw_path, sep=r"\s+", dtype={"FID": str, "IID": str})
     bim = pd.read_csv(
         bim_path,
         sep=r"\s+",
@@ -215,11 +216,12 @@ def write_fimpute_inputs_from_raw(
         sep=r"\s+",
         header=None,
         names=["fid", "iid", "pat", "mat", "sex", "phen"],
+        dtype=str,
     )
 
     use_reference = ref_raw_path is not None
     if use_reference:
-        ref_raw = pd.read_csv(ref_raw_path, sep=r"\s+")
+        ref_raw = pd.read_csv(ref_raw_path, sep=r"\s+", dtype={"FID": str, "IID": str})
         ref_bim = pd.read_csv(
             ref_bim_path,
             sep=r"\s+",
@@ -231,6 +233,7 @@ def write_fimpute_inputs_from_raw(
             sep=r"\s+",
             header=None,
             names=["fid", "iid", "pat", "mat", "sex", "phen"],
+            dtype=str,
         )
     else:
         ref_raw = ref_bim = ref_fam = None
