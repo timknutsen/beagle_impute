@@ -45,7 +45,20 @@ With one, they also impute the reference's extra markers. Add `bref3_jar=bin/bre
 to make Beagle load the reference faster.
 
 Set `beagle_params.ne` for your species (~500 salmon/small livestock, ~1000
-cattle/dogs); Beagle's default of 1,000,000 is for humans and hurts accuracy here.
+cattle/dogs); Beagle's default of 100,000 is for humans and hurts accuracy here.
+
+Set `beagle_params.map` to a PLINK genetic map (`chrom id cM bp`) so Beagle
+uses real recombination distances instead of 1 cM/Mb. For salmon, build it from
+the Brekke et al. 2023 sex-averaged map:
+
+```bash
+python scripts/linkage_map_to_plink.py \
+  /mnt/efshome/aquagen/viktige_filer/linkage_maps/AtlanticSalmon_LinkageMap_Brekke_2021_affyID.txt \
+  brekke2023_avg.map
+```
+
+On 79 salmon with known phase (chr 1 and 25, 3,079 fish phased together), the
+map cut phase switch errors from 39 to 25, all of it in chromosome interiors.
 
 **Outputs** (under `output_dir`, default `vcf_output/`):
 

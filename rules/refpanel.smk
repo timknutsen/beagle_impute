@@ -172,6 +172,7 @@ rule refpanel_phase:
         window  = config["beagle_params"]["window"],
         overlap = config["beagle_params"]["overlap"],
         ne      = config["beagle_params"]["ne"],
+        map_param = beagle_map_param(),
         outbase = _rp_out + "/{variant}/phased/chr{chrom}",
         heap_mb = java_heap_mb(70000),
     threads:
@@ -188,7 +189,7 @@ rule refpanel_phase:
         (java -Xmx{params.heap_mb}m -jar {params.beagle} \
             gt={input.vcf} \
             window={params.window} overlap={params.overlap} \
-            out={params.outbase} nthreads={threads} ne={params.ne} \
+            out={params.outbase} nthreads={threads} ne={params.ne} {params.map_param} \
             chrom={wildcards.chrom}) &> {log}
         tabix -f {output.vcf}
         """

@@ -199,6 +199,33 @@ class TestBeagleDryrun:
         assert f"ref={tmp_path}/ref_chr1.vcf.gz" in result.stdout
         assert "{chrom}" not in result.stdout
 
+    def _shell_cmds(self, tmp_path, **beagle_params):
+        cfg = _beagle_config(tmp_path)
+        cfg["beagle_params"].update(beagle_params)
+        cfg_path = tmp_path / "config.yaml"
+        _write_config(cfg_path, cfg)
+        return subprocess.run(
+            ["snakemake", "--dryrun", "--printshellcmds", "--configfile", str(cfg_path)],
+            cwd=str(REPO_ROOT), capture_output=True, text=True,
+        )
+
+    def test_genetic_map_reaches_beagle(self, tmp_path):
+        gmap = tmp_path / "salmon.map"
+        gmap.write_text("1\ts1\t0.0\t100\n")
+        result = self._shell_cmds(tmp_path, map=str(gmap))
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"map={gmap}" in result.stdout
+
+    def test_no_genetic_map_by_default(self, tmp_path):
+        result = self._shell_cmds(tmp_path)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "map=" not in result.stdout
+
+    def test_missing_genetic_map_is_rejected(self, tmp_path):
+        result = self._shell_cmds(tmp_path, map=str(tmp_path / "absent.map"))
+        assert result.returncode != 0
+        assert "beagle_params.map" in result.stdout + result.stderr
+
 
 @requires_snakemake
 class TestAlphaImpute2Dryrun:
