@@ -74,8 +74,11 @@ beagle_params:
   ne: 500           # Effective population size. Set to match your study species:
                     #   ~500        salmon, small livestock populations
                     #   ~1000       cattle, dogs
-                    #   ~1,000,000  large outbred human populations (Beagle default)
+                    #   ~100,000    large outbred human populations (Beagle 5.5 default; Beagle re-estimates ne, so this is a starting value)
   nthreads: 4       # Threads for Beagle. Match to cluster/local CPU allocation.
+  map: ""           # Optional PLINK genetic map (chrom id cM bp). Empty = Beagle's 1 cM/Mb.
+                    #   With a map, window/overlap are true cM. Salmon: build one from the
+                    #   Brekke et al. 2023 sex-averaged map with scripts/linkage_map_to_plink.py.
 
 # --- AlphaImpute2 parameters (used when imputer: "alphaimpute2") ---
 # AlphaImpute2 is installed automatically via pip in envs/alphaimpute2_env.yaml.

@@ -47,6 +47,24 @@ def java_heap_mb(mem_mb):
     return max(1024, int(mem_mb * _JAVA_HEAP_FRACTION))
 
 
+def beagle_map_param():
+    """map=<file> for Beagle, or "" when beagle_params.map is unset.
+
+    Without a map Beagle assumes 1 cM per Mb, so window/overlap are physical
+    lengths and phasing ignores where the species recombines. Salmon
+    recombination is concentrated near chromosome ends, which is where
+    phase-switch errors cluster without one. The file is a PLINK .map
+    (chrom, id, cM, bp; see scripts/linkage_map_to_plink.py); its chromosome
+    codes must match the VCF CHROM column.
+    """
+    path = nested_config("beagle_params", "map", "")
+    if not path:
+        return ""
+    if not os.path.isfile(path):
+        raise ValueError(f"beagle_params.map={path!r} does not exist")
+    return f"map={path}"
+
+
 # JARs configured under bin/ are treated as auto-managed and fetched on first
 # run. Point the config at any other path to use an existing JAR instead.
 BEAGLE_URL  = "https://faculty.washington.edu/browning/beagle/beagle.27Feb25.75f.jar"

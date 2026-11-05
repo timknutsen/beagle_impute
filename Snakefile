@@ -179,6 +179,7 @@ rule run_beagle:
         window    = config["beagle_params"]["window"],
         overlap   = config["beagle_params"]["overlap"],
         ne        = config["beagle_params"]["ne"],
+        map_param = beagle_map_param(),
         outbase   = lambda wildcards: f"{config['output_dir']}/{_beagle_subdir}/chr{wildcards.chrom}",
         ref_param = lambda wildcards, input: f"ref={input.ref}" if _use_ref else "",
         heap_mb   = java_heap_mb(70000)
@@ -203,6 +204,7 @@ rule run_beagle:
                 out={params.outbase} \
                 nthreads={threads} \
                 ne={params.ne} \
+                {params.map_param} \
                 chrom={wildcards.chrom}
         ) &> {log}
 
